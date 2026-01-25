@@ -12,3 +12,17 @@ def find_by_sector_key(db: Session, sector_key: str):
         .filter(Sector.sector_key == sector_key)
         .first()
     )
+
+
+def find_by_ids(
+    db: Session,
+    sector_ids: list[int]
+):
+    if not sector_ids:
+        return []
+
+    return (
+        db.query(Sector)
+        .filter(Sector.id.in_(sector_ids))
+        .all()
+    )
