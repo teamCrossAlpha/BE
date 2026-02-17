@@ -6,7 +6,7 @@ from common.database import get_db
 from common.dependencies import get_current_user_id
 from interest_sector.interest_sector_repository import find_by_user
 from sector_summary.sector_summary_repository import (
-    find_by_user_interest_today,
+    find_by_sector_ids_today,
     find_by_id,
 )
 from sector_summary.service.daily_summary import (
@@ -42,7 +42,7 @@ def list_summaries(
     interests = find_by_user(db, user_id)
     sector_ids = [i.sector_id for i in interests]
 
-    summaries = find_by_user_interest_today(
+    summaries = find_by_sector_ids_today(
         db, sector_ids, summary_date
     )
 

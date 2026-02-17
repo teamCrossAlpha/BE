@@ -4,7 +4,7 @@ from common.database import SessionLocal
 from sector_summary.service.daily_summary import (
     run_daily_sector_summary_for_user
 )
-from user.models import User  # 🔥 User 모델 import
+from user.user_entity import User
 
 def start_scheduler(app):
     scheduler = BackgroundScheduler(timezone="Asia/Seoul")

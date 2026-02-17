@@ -6,8 +6,9 @@ from sector_summary.service.news_collector import fetch_sector_news
 from sector_summary.service.gpt_summarizer import summarize_sector
 from sector_summary.sector_summary_entity import SectorSummary
 from sector_summary.sector_summary_repository import (
-    save, exists_by_user_sector_date
+    save, exists_by_sector_date
 )
+
 
 def run_daily_sector_summary_for_user(
     db: Session,
@@ -23,9 +24,10 @@ def run_daily_sector_summary_for_user(
     sectors = find_by_ids(db, sector_ids)
 
     for sector in sectors:
-        # 🔥 중복 방지
-        if exists_by_user_sector_date(
-            db, user_id, sector.id, summary_date
+
+        # 🔥 섹터 + 날짜 기준 중복 방지
+        if exists_by_sector_date(
+            db, sector.id, summary_date
         ):
             continue
 
@@ -40,7 +42,6 @@ def run_daily_sector_summary_for_user(
         )
 
         entity = SectorSummary(
-            user_id=user_id,
             sector_id=sector.id,
             summary_date=summary_date,
             title=result["title"],

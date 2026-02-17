@@ -3,32 +3,17 @@ from datetime import date
 from sector_summary.sector_summary_entity import SectorSummary
 
 
-def find_by_user_interest(
+def find_by_sector_ids_today(
     db: Session,
-    user_id: int,
-    sector_ids: list[int],
-):
-    return (
-        db.query(SectorSummary)
-        .filter(
-            SectorSummary.user_id == user_id,
-            SectorSummary.sector_id.in_(sector_ids),
-        )
-        .order_by(SectorSummary.summary_date.desc())
-        .all()
-    )
-
-
-def find_by_user_interest_today(
-    db: Session,
-    user_id: int,
     sector_ids: list[int],
     summary_date: date,
 ):
+    if not sector_ids:
+        return []
+
     return (
         db.query(SectorSummary)
         .filter(
-            SectorSummary.user_id == user_id,
             SectorSummary.sector_id.in_(sector_ids),
             SectorSummary.summary_date == summary_date,
         )
@@ -44,16 +29,14 @@ def find_by_id(db: Session, summary_id: int):
     )
 
 
-def exists_by_user_sector_date(
+def exists_by_sector_date(
     db: Session,
-    user_id: int,
     sector_id: int,
     summary_date: date,
 ) -> bool:
     return (
         db.query(SectorSummary)
         .filter(
-            SectorSummary.user_id == user_id,
             SectorSummary.sector_id == sector_id,
             SectorSummary.summary_date == summary_date,
         )
