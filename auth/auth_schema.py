@@ -11,3 +11,11 @@ class RefreshTokenRequest(BaseModel):
 
 class RefreshTokenResponse(BaseModel):
     accessToken: str
+
+class DevTokenRequest(BaseModel):
+    email: str
+
+class DevTokenResponse(BaseModel):
+    accessToken: str
+    refreshToken: str
+    userId: int

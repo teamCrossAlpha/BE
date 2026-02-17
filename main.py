@@ -1,11 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from auth.auth_router import router as auth_router
 from sector.sector_router import router as sector_router
 from interest_sector.interest_sector_router import router as interest_sector_router
 from sector_summary.sector_summary_router import router as sector_summary_router
 from common.scheduler import start_scheduler
+from auth import dev_auth_router
 
 app = FastAPI()
 
@@ -26,3 +26,4 @@ app.include_router(auth_router)
 app.include_router(sector_router)
 app.include_router(interest_sector_router)
 app.include_router(sector_summary_router)
+app.include_router(dev_auth_router.router)
