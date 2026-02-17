@@ -1,7 +1,11 @@
 fastapi
 uvicorn
-sqlalchemy
+SQLAlchemy
 psycopg2-binary
 pydantic-settings
-requests
+python-dotenv
 PyJWT
+python-multipart
+requests
+openai
+g
