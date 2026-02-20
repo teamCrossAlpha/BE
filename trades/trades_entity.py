@@ -83,6 +83,9 @@ class Asset(Base):
     name = Column(String(255), nullable=False)
     currency = Column(String(8), nullable=True)
     market_cap = Column(Numeric(20, 2), nullable=True)
+    meta_updated_at = Column(DateTime(timezone=True), nullable=False) # 데이터 마지막 갱신 시각
+    sector = Column(String(100), nullable=True)
+
 
 
 class Holding(Base):
