@@ -34,6 +34,3 @@ app.include_router(interest_sector_router)
 app.include_router(sector_summary_router)
 app.include_router(dev_auth_router.router)
 app.include_router(trades_router)
-
-#테이블 자동생성
-Base.metadata.create_all(bind=engine)
