@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -10,6 +12,12 @@ from trades.trades_service import (
     get_trade_list,
     get_trade_detail,
     get_trade_summary,
+)
+from trades.market_snapshot_service import (
+    get_trade_snapshot_quant,
+)
+from trades.market_snapshot_schema import (
+    TradeMarketSnapshotQuantResponse,
 )
 
 router = APIRouter(prefix="/api/trades", tags=["trades"])
@@ -118,4 +126,16 @@ def get_trade_detail_api(
         "pnlStatus": _pnl_status(t),
     }
 
+
+@router.get(
+    "/api/trades/{trade_id}/market-snapshot/quant",
+    response_model=TradeMarketSnapshotQuantResponse,
+)
+def get_trade_market_snapshot_quant(
+    trade_id: int,
+    range: Literal["3M","6M","1Y"] = Query("3M"),
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    return get_trade_snapshot_quant(db, user_id=user_id, trade_id=trade_id, rng=range)  # type: ignore[arg-type]
 

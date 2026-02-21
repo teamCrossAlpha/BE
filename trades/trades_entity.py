@@ -10,6 +10,7 @@ from sqlalchemy import (
     CheckConstraint,
     UniqueConstraint,
     func,
+    JSON
 )
 from sqlalchemy.orm import relationship
 
@@ -187,3 +188,33 @@ class TradeResult(Base):
     )
 
     trade = relationship("Trade", back_populates="result")
+
+
+class TradeMarketSnapshot(Base):
+    __tablename__ = "trade_market_snapshots"
+    __table_args__ = (
+        UniqueConstraint("trade_id", "type", "range", name="uq_trade_snapshot"),
+        CheckConstraint("type IN ('quant','qual')", name="chk_snapshot_type"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+
+    trade_id = Column(
+        BigInteger, ForeignKey("trades.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # quant / qual
+    type = Column(String(10), nullable=False)
+
+    # quant만 사용: '3M'|'6M'|'1Y' / qual은 None
+    range = Column(String(10), nullable=True)
+
+    captured_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # 실제 payload 저장 (정량/정성 결과 JSON)
+    data = Column(JSON, nullable=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
