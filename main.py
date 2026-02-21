@@ -1,5 +1,3 @@
-from common.database import Base, engine
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from auth.auth_router import router as auth_router
@@ -10,9 +8,6 @@ from common.scheduler import start_scheduler
 from auth import dev_auth_router
 from trades.trades_router import router as trades_router
 from tickers.tickers_router import router as tickers_router
-
-import user.user_entity
-import trades.trades_entity
 
 app = FastAPI()
 
@@ -36,6 +31,3 @@ app.include_router(sector_summary_router)
 app.include_router(dev_auth_router.router)
 app.include_router(trades_router)
 app.include_router(tickers_router)
-
-#테이블 자동생성
-Base.metadata.create_all(bind=engine)

@@ -318,7 +318,6 @@ def refresh_asset_overview_if_needed(db: Session, asset: Asset, ttl_hours: int =
     if market_cap is not None and asset.market_cap is None:
         asset.market_cap = market_cap
 
-    # Asset에 sector 컬럼이 있어야 함
     if sector and (getattr(asset, "sector", None) is None or str(asset.sector).strip() == ""):
         asset.sector = sector
 
