@@ -9,3 +9,5 @@ python-multipart
 requests
 openai
 APScheduler
+pandas
+numpy

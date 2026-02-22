@@ -6,6 +6,8 @@ from interest_sector.interest_sector_router import router as interest_sector_rou
 from sector_summary.sector_summary_router import router as sector_summary_router
 from common.scheduler import start_scheduler
 from auth import dev_auth_router
+from trades.trades_router import router as trades_router
+from tickers.tickers_router import router as tickers_router
 
 app = FastAPI()
 
@@ -27,3 +29,5 @@ app.include_router(sector_router)
 app.include_router(interest_sector_router)
 app.include_router(sector_summary_router)
 app.include_router(dev_auth_router.router)
+app.include_router(trades_router)
+app.include_router(tickers_router)
