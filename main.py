@@ -8,6 +8,8 @@ from common.scheduler import start_scheduler
 from auth import dev_auth_router
 from trades.trades_router import router as trades_router
 from tickers.tickers_router import router as tickers_router
+from insights.performance.performance_router import router as performance_router
+
 
 app = FastAPI()
 
@@ -31,3 +33,4 @@ app.include_router(sector_summary_router)
 app.include_router(dev_auth_router.router)
 app.include_router(trades_router)
 app.include_router(tickers_router)
+app.include_router(performance_router)
