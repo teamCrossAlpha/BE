@@ -265,7 +265,6 @@ def get_or_create_asset_minimal(db: Session, ticker: str) -> Asset:
         name=t,
         currency=None,
         market_cap=None,
-        meta_updated_at=None,
     )
     db.add(asset)
     db.commit()
@@ -338,13 +337,6 @@ def _fetch_overview(ticker: str) -> Dict[str, Any]:
 # =========================
 # 3) quote (GLOBAL_QUOTE)
 # =========================
-
-def _fetch_global_quote(ticker: str) -> Dict[str, Any]:
-    data = _alpha_vantage_get({"function": "GLOBAL_QUOTE", "symbol": ticker})
-    q = data.get("Global Quote")
-    if not q:
-        raise ValueError(f"GLOBAL_QUOTE 응답이 비어있습니다: {data}")
-    return q
 
 
 def get_quote(db: Session, ticker: str) -> QuoteResponse:

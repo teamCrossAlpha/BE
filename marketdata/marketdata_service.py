@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from marketdata.marketdata_repository import get_asset_price_by_ticker, upsert_asset_price
-from marketdata.yfinance_provider import fetch_quote_fields
+from marketdata.yfinance_client import fetch_quote_fields
 
 
 def _utcnow() -> datetime:
