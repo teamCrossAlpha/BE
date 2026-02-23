@@ -11,3 +11,4 @@ openai
 APScheduler
 pandas
 numpy
+yfinance
