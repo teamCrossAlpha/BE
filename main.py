@@ -9,6 +9,8 @@ from auth import dev_auth_router
 from trades.trades_router import router as trades_router
 from tickers.tickers_router import router as tickers_router
 from insights.performance.performance_router import router as performance_router
+from insights.behavior_pattern.buy.buy_router import router as buy_pattern_router
+from insights.behavior_pattern.sell.sell_router import router as sell_pattern_router
 
 
 app = FastAPI()
@@ -34,3 +36,5 @@ app.include_router(dev_auth_router.router)
 app.include_router(trades_router)
 app.include_router(tickers_router)
 app.include_router(performance_router)
+app.include_router(buy_pattern_router)
+app.include_router(sell_pattern_router)
