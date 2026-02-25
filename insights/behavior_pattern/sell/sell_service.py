@@ -1,6 +1,11 @@
 from sqlalchemy.orm import Session
-from .sell_repository import get_completed_sell_trades
+from .sell_repository import (
+    get_sell_pattern_stats,
+    get_total_completed_sell_count,
+)
 from .sell_schema import SellPatternResponse, SellPatternItem
+
+
 
 LABEL_MAP = {
     # 1. 이익실현형
@@ -32,47 +37,30 @@ LABEL_MAP = {
 }
 
 
-def calculate_sell_pattern(db: Session, user_id: int) -> SellPatternResponse:
-    sell_trades = get_completed_sell_trades(db, user_id)
-
-    stats = {}
-
-    for sell in sell_trades:
-        tag = sell.behavior_type
-        pnl = float(sell.result.pnl_rate)
-
-        if tag not in stats:
-            stats[tag] = {
-                "count": 0,
-                "wins": 0,
-                "total_return": 0.0,
-            }
-
-        stats[tag]["count"] += 1
-        stats[tag]["total_return"] += pnl
-        if pnl > 0:
-            stats[tag]["wins"] += 1
+def calculate_sell_pattern(db: Session, user_id: int):
+    rows = get_sell_pattern_stats(db, user_id)
 
     patterns = []
-    total = 0
 
-    for tag, data in stats.items():
-        count = data["count"]
-        total += count
-        win_rate = (data["wins"] / count) * 100 if count else 0
-        avg_return = data["total_return"] / count if count else 0
+    for row in rows:
+        win_rate = (row.wins / row.count) * 100 if row.count else 0
+
+        weighted_return = (
+            (row.total_pnl / row.total_invested) * 100
+            if row.total_invested else 0
+        )
 
         patterns.append(
             SellPatternItem(
-                tag=tag,
-                label=LABEL_MAP.get(tag, tag),
-                count=count,
+                tag=row.behavior_type,
+                label=LABEL_MAP.get(row.behavior_type, row.behavior_type),
+                count=row.count,
                 winRate=round(win_rate, 2),
-                averageReturn=round(avg_return * 100, 2),
+                averageReturn=round(weighted_return, 2),
             )
         )
 
     return SellPatternResponse(
-        totalSellTrades=total,
+        totalCompletedTrades=sum(p.count for p in patterns),
         patterns=patterns,
     )

@@ -1,29 +1,33 @@
 from sqlalchemy.orm import Session
-from trades.trades_entity import Trade, TradeResult
+from sqlalchemy import func
+from trades.trades_entity import Trade
 
 
-def get_completed_sell_trades(db: Session, user_id: int):
+def get_buy_pattern_counts(db: Session, user_id: int):
+    """
+    사용자 매수 행동 유형별 건수 집계
+    """
     return (
-        db.query(Trade)
-        .join(TradeResult, Trade.id == TradeResult.trade_id)
+        db.query(
+            Trade.behavior_type,
+            func.count(Trade.id).label("count")
+        )
         .filter(
             Trade.user_id == user_id,
-            Trade.trade_type == "SELL",
-            TradeResult.pnl_rate.isnot(None),
+            Trade.trade_type == "BUY",
+            Trade.behavior_type.isnot(None),
         )
+        .group_by(Trade.behavior_type)
         .all()
     )
 
 
-def find_buy_for_sell(db: Session, sell_trade):
+def get_total_buy_count(db: Session, user_id: int):
     return (
-        db.query(Trade)
+        db.query(func.count(Trade.id))
         .filter(
-            Trade.user_id == sell_trade.user_id,
-            Trade.ticker == sell_trade.ticker,
+            Trade.user_id == user_id,
             Trade.trade_type == "BUY",
-            Trade.trade_date < sell_trade.trade_date,
         )
-        .order_by(Trade.trade_date.desc())
-        .first()
+        .scalar()
     )

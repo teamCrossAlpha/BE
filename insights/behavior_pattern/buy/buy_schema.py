@@ -6,10 +6,8 @@ class BuyPatternItem(BaseModel):
     tag: str
     label: str
     count: int
-    winRate: float
-    averageReturn: float
 
 
 class BuyPatternResponse(BaseModel):
-    totalCompletedTrades: int
+    totalBuyTrades: int
     patterns: List[BuyPatternItem]

@@ -11,5 +11,5 @@ class SellPatternItem(BaseModel):
 
 
 class SellPatternResponse(BaseModel):
-    totalSellTrades: int
+    totalCompletedTrades: int
     patterns: List[SellPatternItem]
