@@ -11,7 +11,8 @@ from tickers.tickers_router import router as tickers_router
 from insights.performance.performance_router import router as performance_router
 from insights.behavior_pattern.buy.buy_router import router as buy_pattern_router
 from insights.behavior_pattern.sell.sell_router import router as sell_pattern_router
-
+from insights.confidence.scatter.confidence_scatter_router import router as confidence_scatter_router
+from insights.confidence.range.confidence_range_router import router as confidence_range_router
 
 app = FastAPI()
 
@@ -38,3 +39,5 @@ app.include_router(tickers_router)
 app.include_router(performance_router)
 app.include_router(buy_pattern_router)
 app.include_router(sell_pattern_router)
+app.include_router(confidence_scatter_router)
+app.include_router(confidence_range_router)

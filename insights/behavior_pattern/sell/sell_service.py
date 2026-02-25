@@ -1,10 +1,6 @@
 from sqlalchemy.orm import Session
-from .sell_repository import (
-    get_sell_pattern_stats,
-    get_total_completed_sell_count,
-)
+from .sell_repository import get_sell_pattern_stats
 from .sell_schema import SellPatternResponse, SellPatternItem
-
 
 
 LABEL_MAP = {
