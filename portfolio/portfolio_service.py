@@ -18,7 +18,6 @@ from portfolio.portfolio_schema import (
     HoldingsListResponse,
     HoldingItem,
     HoldingUpsertRequest,
-    HoldingUpdateRequest,
     HoldingUpsertResponse,
     HoldingDeleteResponse,
     PortfolioSummaryResponse,
@@ -72,123 +71,61 @@ def get_holdings_list(db: Session, user_id: int) -> HoldingsListResponse:
     return HoldingsListResponse(holdings=items)
 
 
-def create_portfolio_holding(db: Session, user_id: int, req: HoldingUpsertRequest) -> HoldingUpsertResponse:
+def upsert_portfolio_holding(db: Session, user_id: int, req: HoldingUpsertRequest) -> HoldingUpsertResponse:
     ticker = req.ticker.upper().strip()
 
-    # assets FK 때문에 assets row 보장
     get_or_create_asset(db, ticker)
 
-    existing = get_holding_by_user_ticker(db, user_id, ticker)
-    if existing:
-        raise HTTPException(status_code=409, detail="Holding already exists")
+    h = get_holding_by_user_ticker(db, user_id, ticker)
 
-    h = Holding(
-        user_id=user_id,
-        ticker=ticker,
-        quantity=req.quantity,
-        average_price=req.averagePrice,
-    )
-    create_holding(db, h)
+    # quantity 0이면 holdings 삭제(있으면)로 처리
+    if req.quantity == 0:
+        if h is not None:
+            delete_holding(db, h)
+            db.commit()
+        return HoldingUpsertResponse(
+            status="SUCCESS",
+            ticker=ticker,
+            quantity=0,
+            averagePrice=None,
+            createdAt=None,
+            updatedAt=None,
+        )
+
+    # 없으면 생성
+    if h is None:
+        h = Holding(
+            user_id=user_id,
+            ticker=ticker,
+            quantity=req.quantity,
+            average_price=req.averagePrice,
+        )
+        create_holding(db, h)
+        db.commit()
+        db.refresh(h)
+        return HoldingUpsertResponse(
+            status="SUCCESS",
+            ticker=h.ticker,
+            quantity=int(h.quantity),
+            averagePrice=h.average_price,
+            createdAt=h.created_at,
+            updatedAt=None,
+        )
+
+    # 있으면 수정(덮어쓰기)
+    h.quantity = req.quantity
+    h.average_price = req.averagePrice
     db.commit()
     db.refresh(h)
 
     return HoldingUpsertResponse(
         status="SUCCESS",
         ticker=h.ticker,
-        quantity=h.quantity,
+        quantity=int(h.quantity),
         averagePrice=h.average_price,
-        createdAt=h.created_at,
+        createdAt=None,
+        updatedAt=h.updated_at,
     )
-
-
-def update_portfolio_holding(db: Session, user_id: int, ticker: str, req: HoldingUpdateRequest) -> HoldingUpsertResponse:
-    t = ticker.upper().strip()
-    get_or_create_asset(db, t)
-
-    h = get_holding_by_user_ticker(db, user_id, t)
-
-    if req.action == "ADD":
-        # ADD일 때는 price 필수
-        if req.price is None:
-            raise HTTPException(status_code=400, detail="price is required for ADD")
-
-        add_qty = int(req.quantity)
-        add_price = Decimal(req.price)
-
-        if h is None:
-            # 신규 생성
-            h = Holding(
-                user_id=user_id,
-                ticker=t,
-                quantity=add_qty,
-                average_price=add_price,
-            )
-            create_holding(db, h)
-        else:
-            prev_qty = int(h.quantity)
-            prev_avg = Decimal(h.average_price) if h.average_price is not None else None
-
-            new_qty = prev_qty + add_qty
-
-            # 평단 가중평균: (prev_avg*prev_qty + add_price*add_qty) / new_qty
-            if prev_avg is None:
-                new_avg = add_price
-            else:
-                new_avg = (prev_avg * Decimal(prev_qty) + add_price * Decimal(add_qty)) / Decimal(new_qty)
-
-            h.quantity = new_qty
-            h.average_price = new_avg
-
-        db.commit()
-        db.refresh(h)
-
-        return HoldingUpsertResponse(
-            status="SUCCESS",
-            ticker=h.ticker,
-            quantity=h.quantity,
-            averagePrice=h.average_price,
-            updatedAt=h.updated_at,
-        )
-
-    if req.action == "REDUCE":
-        if h is None:
-            raise HTTPException(status_code=404, detail="Holding not found")
-
-        reduce_qty = int(req.quantity)
-        prev_qty = int(h.quantity)
-
-        if reduce_qty > prev_qty:
-            raise HTTPException(status_code=400, detail="Reduce quantity exceeds holding quantity")
-
-        new_qty = prev_qty - reduce_qty
-
-        if new_qty == 0:
-            # 0이면 삭제
-            delete_holding(db, h)
-            db.commit()
-            return HoldingUpsertResponse(
-                status="SUCCESS",
-                ticker=t,
-                quantity=0,
-                averagePrice=None,
-                updatedAt=None,
-            )
-
-        # 평단은 유지
-        h.quantity = new_qty
-        db.commit()
-        db.refresh(h)
-
-        return HoldingUpsertResponse(
-            status="SUCCESS",
-            ticker=h.ticker,
-            quantity=h.quantity,
-            averagePrice=h.average_price,
-            updatedAt=h.updated_at,
-        )
-
-    # 방어
-    raise HTTPException(status_code=400, detail="Invalid action")
 
 
 def delete_portfolio_holding(db: Session, user_id: int, ticker: str) -> HoldingDeleteResponse:

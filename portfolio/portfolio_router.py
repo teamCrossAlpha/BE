@@ -11,15 +11,13 @@ from common.dependencies import get_current_user_id
 from portfolio.portfolio_schema import (
     HoldingsListResponse,
     HoldingUpsertRequest,
-    HoldingUpdateRequest,
     HoldingUpsertResponse,
     HoldingDeleteResponse,
     PortfolioSummaryResponse, PortfolioPerformanceResponse,
 )
 from portfolio.portfolio_service import (
     get_holdings_list,
-    create_portfolio_holding,
-    update_portfolio_holding,
+    upsert_portfolio_holding,
     delete_portfolio_holding,
     get_portfolio_summary,
     get_portfolio_performance,
@@ -54,23 +52,13 @@ def get_portfolio_holdings(
     return get_holdings_list(db, user_id)
 
 
-@router.post("/holdings", response_model=HoldingUpsertResponse, status_code=201)
-def create_holding(
+@router.post("/holdings", response_model=HoldingUpsertResponse)
+def upsert_holding(
     req: HoldingUpsertRequest,
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    return create_portfolio_holding(db, user_id, req)
-
-
-@router.patch("/holdings/{ticker}", response_model=HoldingUpsertResponse)
-def patch_holding(
-    ticker: str,
-    req: HoldingUpdateRequest,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    return update_portfolio_holding(db, user_id, ticker, req)
+    return upsert_portfolio_holding(db, user_id, req)
 
 
 @router.delete("/holdings/{ticker}", response_model=HoldingDeleteResponse)

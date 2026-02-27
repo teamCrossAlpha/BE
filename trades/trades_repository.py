@@ -1,7 +1,7 @@
 from typing import List, Tuple, Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, asc
 
 from trades.trades_entity import Asset, Holding, Trade, TradeResult, TradePosition
 
@@ -24,6 +24,13 @@ def get_holding(db: Session, user_id: int, ticker: str) -> Holding | None:
 def upsert_holding(db: Session, user_id: int, ticker: str, quantity: int, avg_price):
     t = ticker.upper().strip()
     h = get_holding(db, user_id, t)
+
+    if quantity <= 0:
+        if h is not None:
+            db.delete(h)
+            db.flush()
+        return None
+
     if not h:
         h = Holding(user_id=user_id, ticker=t, quantity=quantity, average_price=avg_price)
         db.add(h)
@@ -139,3 +146,16 @@ def get_summary(db: Session, user_id: int):
     best_return = float(best_return) if best_return is not None else 0
 
     return total_trades, win_rate, avg_conf, best_return
+
+
+def list_position_buy_trades(db: Session, user_id: int, position_id: int) -> List[Trade]:
+    return (
+        db.query(Trade)
+        .filter(
+            Trade.user_id == user_id,
+            Trade.position_id == position_id,
+            Trade.trade_type == "BUY",
+        )
+        .order_by(asc(Trade.trade_date), asc(Trade.id))
+        .all()
+    )

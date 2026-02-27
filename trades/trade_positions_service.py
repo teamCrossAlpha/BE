@@ -16,12 +16,7 @@ from trades.trade_positions_schema import (
     PositionTradeItem,
     PnlPayload,
 )
-
-
-def _dec(v) -> Optional[Decimal]:
-    if v is None:
-        return None
-    return Decimal(str(v))
+from trades.trades_repository import list_position_buy_trades
 
 
 def _make_trade_item(t: Trade) -> PositionTradeItem:
@@ -141,7 +136,23 @@ def get_trade_positions(
 
             holding = _get_holding(db, user_id, ticker)
             holding_qty = int(holding.quantity) if holding else 0
-            avg_price = _dec(holding.average_price) if (holding and holding.average_price is not None) else None
+
+            avg_price: Decimal | None = None
+            if holding and holding.average_price is not None:
+                avg_price = Decimal(str(holding.average_price))
+            else:
+                # holding이 없거나 average_price가 null이면, 포지션 BUY 기록으로 평단 fallback
+                buy_trades = list_position_buy_trades(db, user_id, int(p.id))
+
+                buy_qty = 0
+                buy_cost = Decimal("0")
+                for bt in buy_trades:
+                    q = int(bt.quantity)
+                    buy_qty += q
+                    buy_cost += Decimal(str(bt.price)) * Decimal(q)
+
+                if buy_qty > 0:
+                    avg_price = buy_cost / Decimal(buy_qty)
 
             # 현재가(캐시)
             q = get_cached_quote_fields(db, ticker, ttl_seconds=180)

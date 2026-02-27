@@ -6,6 +6,7 @@ from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from portfolio.portfolio_repository import delete_holding
 from trades.trades_entity import (
     Trade,
     TradeResult,
@@ -30,7 +31,7 @@ from trades.trades_repository import (
     create_trade_result,
     list_trades_with_results,
     get_trade_with_result,
-    get_summary, close_position, get_open_position, create_position,
+    get_summary, close_position, get_open_position, create_position, list_position_buy_trades,
 )
 
 
@@ -111,7 +112,13 @@ def create_trade_and_update_position(db: Session, user_id: int, req: TradeCreate
     remaining_qty = prev_qty - req.quantity
     position_action = "EXIT" if remaining_qty == 0 else "PARTIAL_EXIT"
 
-    upsert_holding(db, user_id, asset.ticker, remaining_qty, prev_avg)
+    if remaining_qty == 0:
+        # 전량청산이면 holdings row 삭제
+        if holding is not None:
+            delete_holding(db, holding)
+    else:
+        # 평단 유지하면서 수량만 줄이기
+        upsert_holding(db, user_id, asset.ticker, remaining_qty, prev_avg)
 
     trade = Trade(
         user_id=user_id,
@@ -207,9 +214,24 @@ def get_trade_detail(db: Session, user_id: int, trade_id: int) -> TradeDetailRes
 
     trade, result = row
 
-    # 평단: holdings에서 가져오기
+    # 평단: holdings 우선, 없으면 position의 BUY 기록으로 계산
     holding = get_holding(db, user_id, trade.ticker)
-    avg_price = float(holding.average_price) if (holding and holding.average_price is not None) else None
+
+    avg_price: float | None = None
+    if holding and holding.average_price is not None:
+        avg_price = float(holding.average_price)
+    else:
+        buy_trades = list_position_buy_trades(db, user_id, int(trade.position_id))
+
+        buy_qty = 0
+        buy_cost = Decimal("0")
+        for bt in buy_trades:
+            q = int(bt.quantity)
+            buy_qty += q
+            buy_cost += Decimal(str(bt.price)) * Decimal(q)
+
+        if buy_qty > 0:
+            avg_price = float(buy_cost / Decimal(buy_qty))
 
     pnl_payload = None
 
