@@ -1,7 +1,9 @@
+from typing import List, Tuple, Optional
+
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-from trades.trades_entity import Asset, Holding, Trade, TradeResult
+from trades.trades_entity import Asset, Holding, Trade, TradeResult, TradePosition
 
 
 def get_or_create_asset(db: Session, ticker: str) -> Asset:
@@ -34,6 +36,34 @@ def upsert_holding(db: Session, user_id: int, ticker: str, quantity: int, avg_pr
     return h
 
 
+def get_open_position(db: Session, user_id: int, ticker: str) -> TradePosition | None:
+    t = ticker.upper().strip()
+    return (
+        db.query(TradePosition)
+        .filter(
+            TradePosition.user_id == user_id,
+            TradePosition.ticker == t,
+            TradePosition.status == "OPEN",
+        )
+        .first()
+    )
+
+
+def create_position(db: Session, user_id: int, ticker: str) -> TradePosition:
+    t = ticker.upper().strip()
+    p = TradePosition(user_id=user_id, ticker=t, status="OPEN")
+    db.add(p)
+    db.flush()
+    return p
+
+
+def close_position(db: Session, position: TradePosition) -> None:
+    position.status = "CLOSED"
+    position.closed_at = func.now()
+    db.flush()
+
+
+
 def create_trade(db: Session, trade: Trade) -> Trade:
     db.add(trade)
     db.flush()
@@ -46,8 +76,14 @@ def create_trade_result(db: Session, tr: TradeResult) -> TradeResult:
     return tr
 
 
-def list_trades(db: Session, user_id: int, sort_field: str | None, sort_order: str | None):
-    q = db.query(Trade).filter(Trade.user_id == user_id)
+def list_trades_with_results(
+    db: Session, user_id: int, sort_field: str | None, sort_order: str | None
+) -> List[Tuple[Trade, TradeResult]]:
+    q = (
+        db.query(Trade, TradeResult)
+        .join(TradeResult, TradeResult.trade_id == Trade.id)
+        .filter(Trade.user_id == user_id)
+    )
 
     if sort_field == "tradeDate":
         col = Trade.trade_date
@@ -57,11 +93,18 @@ def list_trades(db: Session, user_id: int, sort_field: str | None, sort_order: s
         col = Trade.id
 
     is_asc = (sort_order or "").lower() == "asc"
-    return q.order_by(col.asc() if is_asc else col.desc()).all()
+    q = q.order_by(col.asc() if is_asc else col.desc())
+
+    return q.all()
 
 
-def get_trade(db: Session, user_id: int, trade_id: int) -> Trade | None:
-    return db.query(Trade).filter(Trade.user_id == user_id, Trade.id == trade_id).first()
+def get_trade_with_result(db: Session, user_id: int, trade_id: int) -> Optional[Tuple[Trade, TradeResult]]:
+    return (
+        db.query(Trade, TradeResult)
+        .join(TradeResult, TradeResult.trade_id == Trade.id)
+        .filter(Trade.user_id == user_id, Trade.id == trade_id)
+        .first()
+    )
 
 
 def get_summary(db: Session, user_id: int):

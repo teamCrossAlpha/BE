@@ -117,6 +117,27 @@ class Holding(Base):
     )
 
 
+class TradePosition(Base):
+    __tablename__ = "trade_positions"
+    __table_args__ = (
+        CheckConstraint("status IN ('OPEN','CLOSED')", name="chk_trade_positions_status"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    ticker = Column(String(16), ForeignKey("assets.ticker"), nullable=False, index=True)
+
+    status = Column(String(10), nullable=False, server_default="OPEN")  # OPEN/CLOSED
+    opened_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    trades = relationship("Trade", back_populates="position")
+
+
 class Trade(Base):
     __tablename__ = "trades"
     __table_args__ = (
@@ -141,6 +162,9 @@ class Trade(Base):
 
     user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
     ticker = Column(String(16), ForeignKey("assets.ticker"), nullable=False)
+
+    position_id = Column(BigInteger, ForeignKey("trade_positions.id"), nullable=False, index=True)
+    position = relationship("TradePosition", back_populates="trades")
 
     trade_type = Column(String(10), nullable=False)  # BUY/SELL
     trade_date = Column(Date, nullable=False)
