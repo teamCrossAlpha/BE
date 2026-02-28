@@ -94,3 +94,19 @@ class TechnicalSummaryResponse(BaseModel):
     indicators: TechnicalIndicators
     signals: List[SignalItem] = Field(default_factory=list)
     summaryText: Optional[str] = None
+
+    # -------------------------
+    # News
+    # -------------------------
+
+    class TickerNewsItem(BaseModel):
+        title: str
+        summary: Optional[str]
+        source: Optional[str]
+        url: Optional[str]
+        publishedAt: Optional[str]
+
+    class TickerNewsResponse(BaseModel):
+        ticker: str
+        snapshotDate: str
+        news: List[TickerNewsItem]
