@@ -6,6 +6,7 @@ from interest_sector.interest_sector_router import router as interest_sector_rou
 from sector_summary.sector_summary_router import router as sector_summary_router
 from common.scheduler import start_scheduler
 from auth import dev_auth_router
+from user.user_router import router as user_router
 from trades.trades_router import router as trades_router
 from tickers.tickers_router import router as tickers_router
 from portfolio.portfolio_router import router as portfolio_router
@@ -37,5 +38,6 @@ app.include_router(trades_router)
 app.include_router(tickers_router)
 app.include_router(portfolio_router)
 app.include_router(watchlist_router)
+app.include_router(user_router)
 
 #threading.Thread(target=run_daily_at_9, daemon=True).start()

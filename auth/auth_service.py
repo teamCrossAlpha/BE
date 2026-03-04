@@ -10,7 +10,13 @@ def kakao_login(db: Session, code: str):
     kakao_user = get_user_info(kakao_token)
 
     provider_id = str(kakao_user["id"])
-    email = kakao_user["kakao_account"].get("email")
+
+    kakao_account = kakao_user.get("kakao_account", {})
+    profile = kakao_account.get("profile", {})
+
+    email = kakao_account.get("email")
+    nickname = profile.get("nickname")
+    profile_image = profile.get("profile_image_url")
 
     user = find_by_provider(db, "kakao", provider_id)
     is_new = False
@@ -19,7 +25,9 @@ def kakao_login(db: Session, code: str):
         user = User(
             provider="kakao",
             provider_id=provider_id,
-            email=email
+            email=email,
+            nickname=nickname,
+            profile_image=profile_image
         )
         save(db, user)
         is_new = True
