@@ -1,4 +1,0 @@
-pandas
-FinanceDataReader
-python-dotenv
-openai

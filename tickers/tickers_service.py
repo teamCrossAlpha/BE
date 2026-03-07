@@ -9,6 +9,7 @@ import requests
 from sqlalchemy.orm import Session
 
 from common.config import settings
+from marketdata.marketdata_service import get_cached_quote_fields
 from tickers.gpt_interpreter import explain_snapshot_with_openai
 from tickers.tickers_schema import (
     BollingerBands,
@@ -264,7 +265,6 @@ def get_or_create_asset_minimal(db: Session, ticker: str) -> Asset:
         name=t,
         currency=None,
         market_cap=None,
-        meta_updated_at=None,
     )
     db.add(asset)
     db.commit()
@@ -338,31 +338,18 @@ def _fetch_overview(ticker: str) -> Dict[str, Any]:
 # 3) quote (GLOBAL_QUOTE)
 # =========================
 
-def _fetch_global_quote(ticker: str) -> Dict[str, Any]:
-    data = _alpha_vantage_get({"function": "GLOBAL_QUOTE", "symbol": ticker})
-    q = data.get("Global Quote")
-    if not q:
-        raise ValueError(f"GLOBAL_QUOTE 응답이 비어있습니다: {data}")
-    return q
-
 
 def get_quote(db: Session, ticker: str) -> QuoteResponse:
     t = ticker.upper().strip()
 
-    # 1) 현재가
-    q = _fetch_global_quote(t)
-    price = _safe_float(q.get("05. price")) or 0.0
-    change = _safe_float(q.get("09. change")) or 0.0
+    # 1) 가격 캐시에서 조회 (없거나 stale이면 yfinance로 갱신)
+    price_row = get_cached_quote_fields(db, t,ttl_seconds=180)
 
-    change_percent_raw = q.get("10. change percent")
-    change_rate = 0.0
-    if change_percent_raw:
-        try:
-            change_rate = float(str(change_percent_raw).replace("%", "").strip())
-        except Exception:
-            change_rate = 0.0
+    price = float(price_row.price)
+    change = float(price_row.change) if price_row.change is not None else 0.0
+    change_rate = float(price_row.change_rate) if price_row.change_rate is not None else 0.0
 
-    # 2) 메타는 DB 값만 가져옴(api 호출 x)
+    # 2) 메타는 assets 테이블
     asset = get_or_create_asset_minimal(db, t)
 
     return QuoteResponse(
@@ -370,7 +357,7 @@ def get_quote(db: Session, ticker: str) -> QuoteResponse:
         name=getattr(asset, "name", None),
         price=price,
         change=change,
-        changeRate=change_rate,  # % 그대로
+        changeRate=change_rate,
         currency=getattr(asset, "currency", None),
         sector=getattr(asset, "sector", None),
         marketCap=float(asset.market_cap) if getattr(asset, "market_cap", None) is not None else None,
