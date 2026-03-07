@@ -29,10 +29,11 @@ def get_confidence_range_stats(db: Session, user_id: int):
             func.sum(TradeResult.pnl_amount).label("total_pnl"),
             func.sum(invested_expr).label("total_invested"),
         )
-        .join(TradeResult, Trade.id == TradeResult.trade_id)
+        .outerjoin(TradeResult, Trade.id == TradeResult.trade_id)
         .filter(
             Trade.user_id == user_id,
-            Trade.trade_type.in_(["SELL", "PARTIAL_SELL"]),
+            Trade.trade_type == "SELL",
+            Trade.position_action.in_(["PARTIAL_EXIT", "EXIT"]),
             Trade.confidence.isnot(None),
         )
         .group_by(confidence_range)

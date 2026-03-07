@@ -10,11 +10,12 @@ def get_sell_trades_for_performance(db: Session, user_id: int):
     """
     return (
         db.query(Trade)
-        .join(TradeResult, Trade.id == TradeResult.trade_id)
+        .outerjoin(TradeResult, Trade.id == TradeResult.trade_id)
         .filter(
             Trade.user_id == user_id,
             Trade.trade_type == "SELL",
-            TradeResult.pnl_rate.isnot(None),  # pnl 있는 매도만
+            Trade.position_action.in_(["PARTIAL_EXIT", "EXIT"]),
+            TradeResult.pnl_rate.isnot(None),
         )
         .order_by(Trade.trade_date.asc())
         .all()
