@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import List, Tuple, Optional
 
 from sqlalchemy.orm import Session
@@ -159,3 +160,39 @@ def list_position_buy_trades(db: Session, user_id: int, position_id: int) -> Lis
         .order_by(asc(Trade.trade_date), asc(Trade.id))
         .all()
     )
+
+
+def get_position_state(db: Session, user_id: int, position_id: int) -> Tuple[int, Optional[Decimal]]:
+    """
+    해당 position의 현재 상태를 trades 기준으로 계산
+    """
+    rows = (
+        db.query(Trade.trade_type, Trade.price, Trade.quantity)
+        .filter(
+            Trade.user_id == user_id,
+            Trade.position_id == position_id,
+        )
+        .order_by(Trade.trade_date.asc(), Trade.id.asc())
+        .all()
+    )
+
+    buy_qty = 0
+    sell_qty = 0
+    buy_cost = Decimal("0")
+
+    for trade_type, price, quantity in rows:
+        q = int(quantity)
+
+        if trade_type == "BUY":
+            buy_qty += q
+            buy_cost += Decimal(str(price)) * Decimal(q)
+        elif trade_type == "SELL":
+            sell_qty += q
+
+    remaining_qty = buy_qty - sell_qty
+
+    avg_price = None
+    if buy_qty > 0:
+        avg_price = buy_cost / Decimal(buy_qty)
+
+    return remaining_qty, avg_price # remaining_qty: 현재 남은 수량, avg_price: BUY 기준 가중평균 매입단가

@@ -6,7 +6,6 @@ from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from portfolio.portfolio_repository import delete_holding
 from trades.trades_entity import (
     Trade,
     TradeResult,
@@ -25,13 +24,11 @@ from trades.trades_schema import (
 )
 from trades.trades_repository import (
     get_or_create_asset,
-    get_holding,
-    upsert_holding,
     create_trade,
     create_trade_result,
     list_trades_with_results,
     get_trade_with_result,
-    get_summary, close_position, get_open_position, create_position, list_position_buy_trades,
+    get_summary, close_position, get_open_position, create_position, list_position_buy_trades, get_position_state,
 )
 
 
@@ -51,35 +48,18 @@ def create_trade_and_update_position(db: Session, user_id: int, req: TradeCreate
     _validate_behavior(req.tradeType, req.behaviorType)
 
     asset = get_or_create_asset(db, ticker)
-
-    holding = get_holding(db, user_id, asset.ticker)
-    prev_qty = holding.quantity if holding else 0
-    prev_avg = Decimal(holding.average_price) if (holding and holding.average_price is not None) else None
-
     open_pos = get_open_position(db, user_id, asset.ticker)
 
     # BUY
     if req.tradeType == "BUY":
-        if prev_qty <= 0:
+        if open_pos is None:
+            open_pos = create_position(db, user_id, asset.ticker)
             position_action = "ENTRY"
-            # ENTRY면 포지션이 없어야 함.
-            if open_pos is None:
-                open_pos = create_position(db, user_id, asset.ticker)
-
-            new_qty = req.quantity
-            new_avg = req.price
+            current_qty = 0
+            current_avg = None
         else:
-            position_action = "ADD"
-            if open_pos is None:
-                # holding은 있는데 OPEN 포지션이 없으면 데이터 꼬임 -> 복구용으로 생성
-                open_pos = create_position(db, user_id, asset.ticker)
-
-            new_qty = prev_qty + req.quantity
-            if prev_avg is None:
-                prev_avg = Decimal(req.price)
-            new_avg = (prev_avg * Decimal(prev_qty) + req.price * Decimal(req.quantity)) / Decimal(new_qty)
-
-        upsert_holding(db, user_id, asset.ticker, new_qty, new_avg)
+            current_qty, current_avg = get_position_state(db, user_id, int(open_pos.id))
+            position_action = "ENTRY" if current_qty <= 0 else "ADD"
 
         trade = Trade(
             user_id=user_id,
@@ -101,24 +81,19 @@ def create_trade_and_update_position(db: Session, user_id: int, req: TradeCreate
         return TradeCreateResponse(tradeId=trade.id, status="CREATED")
 
     # SELL
-    if prev_qty <= 0:
-        raise HTTPException(status_code=400, detail="No holding to sell")
-    if req.quantity > prev_qty:
-        raise HTTPException(status_code=400, detail="Sell quantity exceeds holding quantity")
     if open_pos is None:
-        # holding은 있는데 OPEN 포지션이 없으면 데이터 꼬임
-        raise HTTPException(status_code=409, detail="Open position not found for this ticker")
+        raise HTTPException(status_code=400, detail="No open position to sell")
 
-    remaining_qty = prev_qty - req.quantity
+    current_qty, current_avg = get_position_state(db, user_id, int(open_pos.id))
+
+    if current_qty <= 0:
+        raise HTTPException(status_code=400, detail="No holding to sell")
+
+    if req.quantity > current_qty:
+        raise HTTPException(status_code=400, detail="Sell quantity exceeds holding quantity")
+
+    remaining_qty = current_qty - req.quantity
     position_action = "EXIT" if remaining_qty == 0 else "PARTIAL_EXIT"
-
-    if remaining_qty == 0:
-        # 전량청산이면 holdings row 삭제
-        if holding is not None:
-            delete_holding(db, holding)
-    else:
-        # 평단 유지하면서 수량만 줄이기
-        upsert_holding(db, user_id, asset.ticker, remaining_qty, prev_avg)
 
     trade = Trade(
         user_id=user_id,
@@ -135,17 +110,14 @@ def create_trade_and_update_position(db: Session, user_id: int, req: TradeCreate
     )
     create_trade(db, trade)
 
-    # pnl 계산(평단 기준)
     pnl_amount = None
     pnl_rate = None
-    if prev_avg is not None and prev_avg != 0:
-        pnl_amount = (req.price - prev_avg) * Decimal(req.quantity)
-        pnl_rate = (req.price - prev_avg) / prev_avg
+    if current_avg is not None and current_avg != 0:
+        pnl_amount = (req.price - current_avg) * Decimal(req.quantity)
+        pnl_rate = (req.price - current_avg) / current_avg
 
     if position_action == "EXIT":
-        # 포지션 닫기
         close_position(db, open_pos)
-
         create_trade_result(
             db,
             TradeResult(
@@ -169,7 +141,6 @@ def create_trade_and_update_position(db: Session, user_id: int, req: TradeCreate
 
     db.commit()
     return TradeCreateResponse(tradeId=trade.id, status="CREATED")
-
 
 def get_trade_list(db: Session, user_id: int, sort_field: str | None, sort_order: str | None) -> TradeListResponse:
     rows = list_trades_with_results(db, user_id, sort_field, sort_order)
@@ -214,28 +185,20 @@ def get_trade_detail(db: Session, user_id: int, trade_id: int) -> TradeDetailRes
 
     trade, result = row
 
-    # 평단: holdings 우선, 없으면 position의 BUY 기록으로 계산
-    holding = get_holding(db, user_id, trade.ticker)
+    buy_trades = list_position_buy_trades(db, user_id, int(trade.position_id))
+
+    buy_qty = 0
+    buy_cost = Decimal("0")
+    for bt in buy_trades:
+        q = int(bt.quantity)
+        buy_qty += q
+        buy_cost += Decimal(str(bt.price)) * Decimal(q)
 
     avg_price: float | None = None
-    if holding and holding.average_price is not None:
-        avg_price = float(holding.average_price)
-    else:
-        buy_trades = list_position_buy_trades(db, user_id, int(trade.position_id))
-
-        buy_qty = 0
-        buy_cost = Decimal("0")
-        for bt in buy_trades:
-            q = int(bt.quantity)
-            buy_qty += q
-            buy_cost += Decimal(str(bt.price)) * Decimal(q)
-
-        if buy_qty > 0:
-            avg_price = float(buy_cost / Decimal(buy_qty))
+    if buy_qty > 0:
+        avg_price = float(buy_cost / Decimal(buy_qty))
 
     pnl_payload = None
-
-    # SELL일 때만 pnl 의미 있음 (계산값이 없으면 null 유지)
     if trade.trade_type == "SELL":
         if result.pnl_rate is not None and result.pnl_amount is not None:
             pnl_payload = PnlPayload(
@@ -254,7 +217,7 @@ def get_trade_detail(db: Session, user_id: int, trade_id: int) -> TradeDetailRes
         behaviorType=trade.behavior_type,
         memo=trade.memo,
         pnlStatus=result.pnl_status,
-        pnl=pnl_payload,            # BUY면 항상 null
+        pnl=pnl_payload,
         averagePrice=avg_price,
     )
 
