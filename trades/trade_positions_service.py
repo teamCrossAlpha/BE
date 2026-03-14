@@ -16,7 +16,6 @@ from trades.trade_positions_schema import (
     PositionTradeItem,
     PnlPayload,
 )
-from trades.trades_repository import list_position_buy_trades
 
 
 def _make_trade_item(t: Trade) -> PositionTradeItem:
@@ -37,14 +36,6 @@ def _make_trade_item(t: Trade) -> PositionTradeItem:
         price=float(t.price),
         quantity=int(t.quantity),
         pnl=pnl,
-    )
-
-
-def _get_holding(db: Session, user_id: int, ticker: str) -> Optional[Holding]:
-    return (
-        db.query(Holding)
-        .filter(Holding.user_id == user_id, Holding.ticker == ticker.upper().strip())
-        .first()
     )
 
 
@@ -134,25 +125,24 @@ def get_trade_positions(
         for p in positions:
             ticker = p.ticker.upper().strip()
 
-            holding = _get_holding(db, user_id, ticker)
-            holding_qty = int(holding.quantity) if holding else 0
+            # OPEN 포지션의 현재 상태는 position.trades 기준으로 계산
+            buy_qty = 0
+            sell_qty = 0
+            buy_cost = Decimal("0")
+
+            for t in p.trades:
+                if t.trade_type == "BUY":
+                    q = int(t.quantity)
+                    buy_qty += q
+                    buy_cost += Decimal(str(t.price)) * Decimal(q)
+                elif t.trade_type == "SELL":
+                    sell_qty += int(t.quantity)
+
+            holding_qty = buy_qty - sell_qty
 
             avg_price: Decimal | None = None
-            if holding and holding.average_price is not None:
-                avg_price = Decimal(str(holding.average_price))
-            else:
-                # holding이 없거나 average_price가 null이면, 포지션 BUY 기록으로 평단 fallback
-                buy_trades = list_position_buy_trades(db, user_id, int(p.id))
-
-                buy_qty = 0
-                buy_cost = Decimal("0")
-                for bt in buy_trades:
-                    q = int(bt.quantity)
-                    buy_qty += q
-                    buy_cost += Decimal(str(bt.price)) * Decimal(q)
-
-                if buy_qty > 0:
-                    avg_price = buy_cost / Decimal(buy_qty)
+            if buy_qty > 0:
+                avg_price = buy_cost / Decimal(buy_qty)
 
             # 현재가(캐시)
             q = get_cached_quote_fields(db, ticker, ttl_seconds=180)
