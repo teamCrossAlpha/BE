@@ -1,4 +1,4 @@
-name: CI with Docker
+name: 도커 이미지 빌드 테스트 및 CI
 
 on:
   push:
