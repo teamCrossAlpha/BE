@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import os
+from openai import OpenAI
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -13,19 +13,21 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from common.config import settings
-from tickers.gpt_interpreter import explain_snapshot_with_openai  # tech 목적용
+from tickers.ticker_news_entity import TickerNews
+from tickers.tickers_entity import Ticker
 from tickers.tickers_schema import BollingerBands, TechnicalIndicators, TechnicalSnapshot
 from trades.market_snapshot_schema import (
     TradeMarketSnapshotQuantResponse,
     IndicatorsDTO,
     BollingerDTO,
-    PricePoint,
+    PricePoint, TradeMarketSnapshotNewsItem, TradeMarketSnapshotQualResponse,
 )
 from trades.trades_entity import Trade, TradeMarketSnapshot
 
 
 QuantRange = Literal["3M", "6M", "1Y"]
 
+client = OpenAI(api_key=settings.openai_api_key)
 
 # AlphaVantage 유틸
 
@@ -251,6 +253,43 @@ def build_quant_snapshot_for_trade(db: Session, trade: Trade, rng: QuantRange) -
     return resp
 
 
+def build_qual_snapshot_for_trade(db: Session, trade: Trade) -> TradeMarketSnapshotQualResponse:
+    ticker_str = trade.ticker.upper().strip()
+    trade_day: date = trade.trade_date
+
+    ticker_obj = db.query(Ticker).filter(Ticker.ticker == ticker_str).first()
+    if not ticker_obj:
+        raise HTTPException(status_code=404, detail="ticker not found")
+
+    rows = (
+        db.query(TickerNews)
+        .filter(
+            TickerNews.ticker_id == ticker_obj.id,
+            TickerNews.snapshot_date == trade_day,
+        )
+        .order_by(TickerNews.published_at.desc())
+        .limit(3)
+        .all()
+    )
+
+    news_items = [
+        TradeMarketSnapshotNewsItem(
+            title=row.title,
+            summary=row.summary or "",
+            source=row.source or "",
+            url=row.url or "",
+            publishedAt=row.published_at.isoformat() if row.published_at else None,
+        )
+        for row in rows
+    ]
+
+    return TradeMarketSnapshotQualResponse(
+        type="qual",
+        snapshotDate=str(trade_day),
+        news=news_items,
+    )
+
+
 # service 함수들
 
 def get_trade_snapshot_quant(db: Session, user_id: int, trade_id: int, rng: QuantRange) -> TradeMarketSnapshotQuantResponse:
@@ -266,4 +305,22 @@ def get_trade_snapshot_quant(db: Session, user_id: int, trade_id: int, rng: Quan
     # 생성
     resp = build_quant_snapshot_for_trade(db, trade, rng)
     _save_snapshot(db, trade_id, "quant", rng, resp.model_dump())
+    return resp
+
+
+def get_trade_snapshot_qual(db: Session, user_id: int, trade_id: int) -> TradeMarketSnapshotQualResponse:
+    trade = (
+        db.query(Trade)
+        .filter(Trade.id == trade_id, Trade.user_id == user_id)
+        .first()
+    )
+    if not trade:
+        raise HTTPException(status_code=404, detail="trade not found")
+
+    cached = _get_cached_snapshot(db, trade_id, "qual", None)
+    if cached:
+        return TradeMarketSnapshotQualResponse.model_validate(cached.data)
+
+    resp = build_qual_snapshot_for_trade(db, trade)
+    _save_snapshot(db, trade_id, "qual", None, resp.model_dump())
     return resp

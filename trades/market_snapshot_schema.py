@@ -32,3 +32,18 @@ class TradeMarketSnapshotQuantResponse(BaseModel):
     range: QuantRange
     priceSeries: List[PricePoint]
     indicators: IndicatorsDTO
+
+
+# Qual 응답
+class TradeMarketSnapshotNewsItem(BaseModel):
+    title: str
+    summary: str
+    source: str
+    url: str
+    publishedAt: str | None = None
+
+
+class TradeMarketSnapshotQualResponse(BaseModel):
+    type: Literal["qual"] = "qual"
+    snapshotDate: str
+    news: List[TradeMarketSnapshotNewsItem]
