@@ -58,4 +58,4 @@ app.include_router(watchlist_router)
 app.include_router(user_router)
 app.include_router(action_plan_router)
 
-threading.Thread(target=run_daily_at_9, daemon=True).start()
+#threading.Thread(target=run_daily_at_9, daemon=True).start()
