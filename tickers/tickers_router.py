@@ -4,13 +4,11 @@ from typing import Literal
 
 from common.database import get_db
 from tickers.tickers_schema import (
-    ChartResponse,
     QuoteResponse,
     TechnicalSummaryResponse,
     TickerNewsResponse,
 )
 from tickers.tickers_service import (
-    get_chart_1m,
     get_quote,
     get_technical_summary_with_llm,
 )
@@ -22,11 +20,6 @@ router = APIRouter(prefix="/api/tickers", tags=["TICKERS"])
 @router.get("/{ticker}/quote", response_model=QuoteResponse)
 def get_ticker_quote(ticker: str, db: Session = Depends(get_db)):
     return get_quote(db, ticker)
-
-
-@router.get("/{ticker}/chart", response_model=ChartResponse)
-def get_ticker_chart(ticker: str):
-    return get_chart_1m(ticker)
 
 
 @router.get("/{ticker}/technical-summary", response_model=TechnicalSummaryResponse)
