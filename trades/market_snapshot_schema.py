@@ -26,9 +26,33 @@ class IndicatorsDTO(BaseModel):
     bollinger: BollingerDTO
 
 
+class SignalItem(BaseModel):
+    id: str
+    title: str
+    description: str
+    strength: Literal["LOW", "MEDIUM", "HIGH"]
+
+
 # Quant 응답
 class TradeMarketSnapshotQuantResponse(BaseModel):
     type: Literal["quant"] = "quant"
     range: QuantRange
     priceSeries: List[PricePoint]
     indicators: IndicatorsDTO
+    signals: List[SignalItem]
+    summaryText: Optional[str] = None
+
+
+# Qual 응답
+class TradeMarketSnapshotNewsItem(BaseModel):
+    title: str
+    summary: str
+    source: str
+    url: str
+    publishedAt: str | None = None
+
+
+class TradeMarketSnapshotQualResponse(BaseModel):
+    type: Literal["qual"] = "qual"
+    snapshotDate: str
+    news: List[TradeMarketSnapshotNewsItem]

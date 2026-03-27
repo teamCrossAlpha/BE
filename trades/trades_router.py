@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 
 from common.database import get_db
 from common.dependencies import get_current_user_id
-from trades.market_snapshot_schema import TradeMarketSnapshotQuantResponse
-from trades.market_snapshot_service import get_trade_snapshot_quant
+from trades.market_snapshot_schema import TradeMarketSnapshotQuantResponse, TradeMarketSnapshotQualResponse
+from trades.market_snapshot_service import get_trade_snapshot_quant, get_trade_snapshot_qual
 
 from trades.trades_schema import (
     TradeCreateRequest,
@@ -88,3 +88,14 @@ def get_trade_market_snapshot_quant(
 ):
     return get_trade_snapshot_quant(db, user_id=user_id, trade_id=tradeId, rng=range)
 
+
+@router.get(
+    "/{tradeId}/market-snapshot/qual",
+    response_model=TradeMarketSnapshotQualResponse,
+)
+def get_trade_market_snapshot_qual(
+    tradeId: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    return get_trade_snapshot_qual(db, user_id=user_id, trade_id=tradeId)

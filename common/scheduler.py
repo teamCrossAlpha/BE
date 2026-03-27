@@ -15,7 +15,7 @@ from tickers.tickers_service import (
     refresh_asset_overview_if_needed,
 )
 
-MAX_ASSETS_PER_RUN = 5  # 한 번 실행에서 갱신할 최대 종목 수(무료 API 호출 횟수 제한으로 인해 임시 적용)
+MAX_ASSETS_PER_RUN = 10  # 한 번 실행에서 갱신할 최대 종목 수(무료 API 호출 횟수 제한으로 인해 임시 적용)
 
 def start_scheduler(app):
     scheduler = BackgroundScheduler(timezone="Asia/Seoul")
@@ -49,9 +49,6 @@ def start_scheduler(app):
     def daily_asset_meta_job():
         db: Session = SessionLocal()
         try:
-            # 최신화 우선순위:
-            # - meta_updated_at이 None인 것 먼저
-            # - 그 다음 오래된 것
             assets = (
                 db.query(Asset)
                 .order_by(Asset.meta_updated_at.is_(None).desc(), Asset.meta_updated_at.asc())
@@ -59,13 +56,16 @@ def start_scheduler(app):
                 .all()
             )
 
+            print(f"[daily_asset_meta_job] 대상 종목 수: {len(assets)}")
+
             for asset in assets:
                 try:
-                    # 내부에서 stale 체크하고, 필요할 때만 API 호출 + DB 업데이트
+                    print(f"[daily_asset_meta_job] 시작: {asset.ticker}, meta_updated_at={asset.meta_updated_at}")
                     refresh_asset_overview_if_needed(db, asset, ttl_hours=24)
+                    print(f"[daily_asset_meta_job] 완료: {asset.ticker}, meta_updated_at={asset.meta_updated_at}")
                     time.sleep(1.1)
-                except Exception:
-                    # 한 종목 실패해도 다음 종목 계속 진행
+                except Exception as e:
+                    print(f"[daily_asset_meta_job] 실패: {asset.ticker}, error={e}")
                     continue
         finally:
             db.close()

@@ -20,6 +20,7 @@ from insights.action_plan.action_plan_router import router as action_plan_router
 from portfolio.portfolio_router import router as portfolio_router
 from watchlist.watchlist_router import router as watchlist_router
 from tickers.news_scheduler import run_daily_at_9
+from analysis.analysis_router import router as analysis_router
 
 import threading
 
@@ -56,6 +57,7 @@ app.include_router(confidence_range_router)
 app.include_router(portfolio_router)
 app.include_router(watchlist_router)
 app.include_router(user_router)
+app.include_router(analysis_router)
 app.include_router(action_plan_router)
 
 #threading.Thread(target=run_daily_at_9, daemon=True).start()
