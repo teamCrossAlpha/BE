@@ -286,6 +286,7 @@ def refresh_asset_overview_if_needed(db: Session, asset: Asset, ttl_hours: int =
 
     overview = _fetch_overview(asset.ticker)
     if not overview:
+        print(f"[refresh_asset_overview_if_needed] overview 없음: {asset.ticker}")
         return
 
     name = overview.get("Name")
