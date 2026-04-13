@@ -1,20 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import requests
 from sqlalchemy.orm import Session
+import yfinance as yf
 
 from common.config import settings
 from marketdata.marketdata_service import get_cached_quote_fields
 from tickers.gpt_interpreter import explain_snapshot_with_openai
 from tickers.tickers_schema import (
     BollingerBands,
-    ChartPoint,
-    ChartResponse,
     QuoteResponse,
     TechnicalIndicators,
     TechnicalSnapshot,
@@ -66,45 +64,35 @@ def _safe_float(v: Any) -> Optional[float]:
 # 시세/차트 공통 타입
 # =========================
 
-@dataclass
-class AlphaVantageDailyBar:
-    date: str
-    close: float
 
-
-def _fetch_daily_series(ticker: str, outputsize: str = "compact") -> List[AlphaVantageDailyBar]:
-    """
-    AlphaVantage TIME_SERIES_DAILY
-    - outputsize: 'compact'(최근 100일) / 'full'(최대)
-    """
-    data = _alpha_vantage_get(
-        {
-            "function": "TIME_SERIES_DAILY",
-            "symbol": ticker,
-            "outputsize": outputsize,
-        }
+def _fetch_daily_series_yf(ticker: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
+    df = yf.download(
+        ticker,
+        start=start_date.strftime("%Y-%m-%d"),
+        end=end_date.strftime("%Y-%m-%d"),
+        interval="1d",
+        auto_adjust=False,
+        progress=False,
     )
 
-    ts = data.get("Time Series (Daily)")
-    if not ts:
-        raise ValueError(f"AlphaVantage 응답에 Time Series (Daily) 없음: {data}")
+    if df is None or df.empty:
+        raise ValueError("yfinance에서 가격 데이터를 가져오지 못했습니다.")
 
-    bars: List[AlphaVantageDailyBar] = []
-    for date_str, row in ts.items():
-        close_str = row.get("4. close")
-        if close_str is None:
-            continue
-        bars.append(AlphaVantageDailyBar(date=date_str, close=float(close_str)))
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [col[0] for col in df.columns]
 
-    bars.sort(key=lambda b: b.date)  # 오름차순
-    return bars
+    if "Close" not in df.columns:
+        raise ValueError("yfinance 응답에 Close 컬럼이 없습니다.")
 
+    out = df[["Close"]].copy()
+    out = out.rename(columns={"Close": "close"})
+    out.index = pd.to_datetime(out.index)
+    out = out.sort_index()
 
-def _to_dataframe(bars: List[AlphaVantageDailyBar]) -> pd.DataFrame:
-    df = pd.DataFrame([{"date": b.date, "close": b.close} for b in bars])
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.set_index("date").sort_index()
-    return df
+    if out.empty:
+        raise ValueError("유효한 종가 데이터가 없습니다.")
+
+    return out
 
 
 # =========================
@@ -207,13 +195,10 @@ def get_technical_summary_with_llm(ticker: str, rng: str = "3M") -> TechnicalSum
 
     days = _range_to_days(rng)
 
-    outputsize = "compact"
+    end_dt = datetime.today() + timedelta(days=1)
+    start_dt = datetime.today() - timedelta(days=days * 2)
 
-    bars = _fetch_daily_series(t, outputsize=outputsize)
-    df = _to_dataframe(bars)
-
-    cutoff = datetime.today() - timedelta(days=days * 2)
-    df = df[df.index >= cutoff]
+    df = _fetch_daily_series_yf(t, start_dt, end_dt)
 
     if df.empty:
         raise ValueError("해당 range 구간에 데이터가 없습니다.")
@@ -301,6 +286,7 @@ def refresh_asset_overview_if_needed(db: Session, asset: Asset, ttl_hours: int =
 
     overview = _fetch_overview(asset.ticker)
     if not overview:
+        print(f"[refresh_asset_overview_if_needed] overview 없음: {asset.ticker}")
         return
 
     name = overview.get("Name")
@@ -362,19 +348,3 @@ def get_quote(db: Session, ticker: str) -> QuoteResponse:
         sector=getattr(asset, "sector", None),
         marketCap=float(asset.market_cap) if getattr(asset, "market_cap", None) is not None else None,
     )
-
-
-# =========================
-# 4) chart (1M 고정)
-# =========================
-
-def get_chart_1m(ticker: str) -> ChartResponse:
-    t = ticker.upper().strip()
-
-    bars = _fetch_daily_series(t, outputsize="compact")
-
-    # 거래일 기준 대략 1개월 커버하도록 40개 정도만 자름
-    recent = bars[-40:] if len(bars) > 40 else bars
-    series = [ChartPoint(date=b.date, close=b.close) for b in recent]
-
-    return ChartResponse(ticker=t, range="1M", series=series)

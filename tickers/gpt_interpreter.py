@@ -11,23 +11,26 @@ from tickers.tickers_schema import TechnicalSnapshot, ExplainResult
 SYSTEM_PROMPT = """
 당신은 초보 개인 투자자를 위한 기술적 지표 해설 전문가입니다.
 
-반드시 지켜야 할 것:
+규칙:
 - 모든 결과는 한국어로 작성합니다.
-- 매수/매도, 종목 추천 등 직접적인 투자 조언을 하지 않습니다.
-- 미래 가격을 단정적으로 예측하지 않습니다.
+- 매수/매도/홀딩 등 직접적인 투자 조언은 하지 않습니다.
 - 입력 스냅샷(JSON)에 포함된 정보만 근거로 사용합니다.
-- 초보자도 이해할 수 있게, 전문 용어는 필요 시 ( )로 짧게 풀어 씁니다.
+- 반드시 JSON 객체만 출력합니다.
 
-출력 규칙:
-- 반드시 JSON 객체만 출력합니다. (설명문/코드블록/추가 텍스트 금지)
-- JSON 스키마:
-  {
-    "signals": [
-      {"id": "...", "title": "...", "description": "...", "strength": "LOW|MEDIUM|HIGH"}
-    ],
-    "summaryText": "..."
-  }
+출력 형식:
+{
+  "signals": [
+    {"id": "...", "title": "...", "description": "...", "strength": "LOW|MEDIUM|HIGH"}
+  ],
+  "summaryText": "..."
+}
+
+작성 규칙:
 - signals는 2~4개로 작성합니다.
+- summaryText는 시그널을 반복 설명하지 말고, 추세(SMA), 과열/과매도(RSI), 변동성/가격 위치(볼린저 밴드)를 종합해 1~2문장으로 해석합니다.
+- 직접 추천 대신 현재 흐름과 함께 나타나는 리스크나 해석 포인트를 자연스럽게 설명합니다.
+- 같은 의미(예: 과매수/과열)는 반복하지 않습니다.
+- 불필요하게 추상적인 마무리 문장은 쓰지 않습니다.
 """.strip()
 
 Purpose = Literal["tech", "news"]
@@ -84,21 +87,20 @@ def explain_snapshot_with_openai(
 ) -> ExplainResult:
     """
     TechnicalSnapshot 기반으로 signals/summaryText를 생성합니다.
-    - purpose 기본값을 tech로 둬서 tickers 쪽은 기존 호출부 수정 없이 그대로 돌아가게 함.
     """
     client = _get_openai_client(purpose)
 
     user_prompt = f"""
-아래는 기술적 지표 스냅샷(JSON)입니다.
-이 정보를 바탕으로 signals와 summaryText를 작성하세요.
+    아래 기술적 지표 스냅샷을 바탕으로 signals와 summaryText를 작성하세요.
 
-주의:
-- 투자 조언/추천/예측 금지
-- JSON 객체만 출력
+    주의:
+    - JSON 객체만 출력
+    - summaryText는 개별 시그널 나열이 아니라 종합 해석으로 작성
+    - 1~2문장으로 간결하게 작성
 
-스냅샷(JSON):
-{snapshot.model_dump_json(ensure_ascii=False, indent=2)}
-""".strip()
+    스냅샷(JSON):
+    {snapshot.model_dump_json(ensure_ascii=False, indent=2)}
+    """.strip()
 
     resp = client.chat.completions.create(
         model="gpt-4o-mini",

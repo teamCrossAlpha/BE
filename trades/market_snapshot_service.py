@@ -1,31 +1,34 @@
 from __future__ import annotations
 
-import json
-import os
 import time
-from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Literal
 
+import yfinance as yf
 import pandas as pd
 import requests
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from common.config import settings
-from tickers.gpt_interpreter import explain_snapshot_with_openai  # tech 목적용
+from tickers.gpt_interpreter import explain_snapshot_with_openai
+from tickers.ticker_news_entity import TickerNews
+from tickers.tickers_entity import Ticker
 from tickers.tickers_schema import BollingerBands, TechnicalIndicators, TechnicalSnapshot
+from tickers.tickers_service import _make_signal_ids
 from trades.market_snapshot_schema import (
     TradeMarketSnapshotQuantResponse,
     IndicatorsDTO,
     BollingerDTO,
     PricePoint,
+    TradeMarketSnapshotNewsItem,
+    TradeMarketSnapshotQualResponse,
+    SignalItem,
 )
 from trades.trades_entity import Trade, TradeMarketSnapshot
 
 
 QuantRange = Literal["3M", "6M", "1Y"]
-
 
 # AlphaVantage 유틸
 
@@ -67,43 +70,76 @@ def _safe_float(v: Any) -> Optional[float]:
         return None
 
 
-@dataclass
-class DailyBar:
-    date: str
-    close: float
-
-
-def _fetch_daily_series_compact(ticker: str) -> List[DailyBar]:
+def _fetch_daily_series_yf(ticker: str, trade_day: date, rng: str) -> pd.DataFrame:
     """
-    TIME_SERIES_DAILY + compact(최근 100개)
+    yfinance로 일봉 종가 데이터 조회
+    - trade_day 이전 데이터까지만 사용하기 위해 end는 trade_day + 1일
+    - 지표 계산 여유분 확보 위해 range보다 넉넉하게 조회
     """
-    data = _alpha_vantage_get(
-        {
-            "function": "TIME_SERIES_DAILY",
-            "symbol": ticker,
-            "outputsize": "compact",
-        }
+    rng = (rng or "3M").upper().strip()
+
+    if rng == "3M":
+        lookback_days = 120
+    elif rng == "6M":
+        lookback_days = 240
+    elif rng == "1Y":
+        lookback_days = 420
+    else:
+        lookback_days = 120
+
+    start_day = trade_day - timedelta(days=lookback_days)
+    end_day = trade_day + timedelta(days=1)
+
+    df = yf.download(
+        ticker,
+        start=start_day.strftime("%Y-%m-%d"),
+        end=end_day.strftime("%Y-%m-%d"),
+        interval="1d",
+        auto_adjust=False,
+        progress=False,
     )
-    ts = data.get("Time Series (Daily)")
-    if not ts:
-        raise RuntimeError(f"AlphaVantage 응답에 Time Series (Daily) 없음: {data}")
 
-    bars: List[DailyBar] = []
-    for d, row in ts.items():
-        c = row.get("4. close")
-        if c is None:
+    if df is None or df.empty:
+        raise ValueError("yfinance에서 가격 데이터를 가져오지 못했습니다.")
+
+    # MultiIndex 방어
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [col[0] for col in df.columns]
+
+    if "Close" not in df.columns:
+        raise ValueError("yfinance 응답에 Close 컬럼이 없습니다.")
+
+    out = df[["Close"]].copy()
+    out = out.rename(columns={"Close": "close"})
+    out.index = pd.to_datetime(out.index)
+    out = out.sort_index()
+
+    # trade_day 이후 데이터 제거
+    out = out[out.index.date <= trade_day]
+
+    if out.empty:
+        raise ValueError("거래일 이전 가격 데이터가 없습니다.")
+
+    return out
+
+
+def _convert_signals(raw_signals: List[Any]) -> List[SignalItem]:
+    items: List[SignalItem] = []
+
+    for s in raw_signals or []:
+        try:
+            items.append(
+                SignalItem(
+                    id=str(getattr(s, "id", "")),
+                    title=str(getattr(s, "title", "")),
+                    description=str(getattr(s, "description", "")),
+                    strength=str(getattr(s, "strength", "LOW")).upper(),
+                )
+            )
+        except Exception:
             continue
-        bars.append(DailyBar(date=d, close=float(c)))
 
-    bars.sort(key=lambda b: b.date)
-    return bars
-
-
-def _to_dataframe(bars: List[DailyBar]) -> pd.DataFrame:
-    df = pd.DataFrame([{"date": b.date, "close": b.close} for b in bars])
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.set_index("date").sort_index()
-    return df
+    return items
 
 
 # 지표 계산(기존 tickers_service와 동일 로직)
@@ -199,42 +235,42 @@ def _save_snapshot(
 
 # Quant 생성 (trade_date 기준)
 
-def build_quant_snapshot_for_trade(db: Session, trade: Trade, rng: QuantRange) -> TradeMarketSnapshotQuantResponse:
+def build_quant_snapshot_for_trade(db: Session, trade: Trade, rng: str) -> TradeMarketSnapshotQuantResponse:
     ticker = trade.ticker.upper().strip()
     trade_day: date = trade.trade_date
+    rng = (rng or "3M").upper().strip()
 
-    bars = _fetch_daily_series_compact(ticker)
-    df = _to_dataframe(bars)
+    df = _fetch_daily_series_yf(ticker, trade_day, rng)
 
-    # trade_date 이전까지만 사용 (해당 날짜가 휴장일이면 가장 가까운 이전 거래일 기준으로 자동 슬라이싱됨)
-    df = df[df.index.date <= trade_day]
-    if df.empty:
-        raise HTTPException(status_code=422, detail="거래일 이전 가격 데이터가 없습니다.")
-
-    # range 기준으로 컷
-    days = _range_to_days(rng)
-    cutoff = datetime.combine(trade_day, datetime.min.time()) - timedelta(days=days * 2)  # 주말/휴장 여유
-    df = df[df.index >= cutoff]
-    if df.empty:
-        raise HTTPException(status_code=422, detail="해당 range 구간에 데이터가 없습니다.")
-
-    # indicators 계산(최소 50거래일 필요)
-    try:
-        df_calc, indicators = _calc_indicators(df)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-
-    # priceSeries는 차트 렌더링용으로 최근 N개 (range별로 다르게)
-    # 3M: ~70개, 6M: ~120개(근데 compact 100 제한이라 최대 100), 1Y: 거의 부족할 수 있음
-    max_points = 70 if rng == "3M" else 100
-    recent = df_calc.tail(max_points)
-
+    # 차트용 series
     price_series = [
         PricePoint(date=idx.strftime("%Y-%m-%d"), close=float(row["close"]))
-        for idx, row in recent.iterrows()
+        for idx, row in df.iterrows()
     ]
 
-    resp = TradeMarketSnapshotQuantResponse(
+    # 기술지표 계산
+    df_calc, indicators = _calc_indicators(df)
+    signal_ids = _make_signal_ids(df_calc, indicators)
+
+    signals: List[SignalItem] = []
+    summary_text: str | None = None
+
+    try:
+        snapshot = TechnicalSnapshot(
+            ticker=ticker,
+            range=rng,
+            lastClose=float(df_calc.iloc[-1]["close"]),
+            indicators=indicators,
+            signalIds=signal_ids,
+        )
+        explain = explain_snapshot_with_openai(snapshot, purpose="tech")
+        signals = _convert_signals(explain.signals)
+        summary_text = explain.summaryText
+    except Exception:
+        pass
+
+    return TradeMarketSnapshotQuantResponse(
+        type="quant",
         range=rng,
         priceSeries=price_series,
         indicators=IndicatorsDTO(
@@ -247,8 +283,46 @@ def build_quant_snapshot_for_trade(db: Session, trade: Trade, rng: QuantRange) -
                 lower=indicators.bollinger.lower,
             ),
         ),
+        signals=signals,
+        summaryText=summary_text,
     )
-    return resp
+
+
+def build_qual_snapshot_for_trade(db: Session, trade: Trade) -> TradeMarketSnapshotQualResponse:
+    ticker_str = trade.ticker.upper().strip()
+    trade_day: date = trade.trade_date
+
+    ticker_obj = db.query(Ticker).filter(Ticker.ticker == ticker_str).first()
+    if not ticker_obj:
+        raise HTTPException(status_code=404, detail="ticker not found")
+
+    rows = (
+        db.query(TickerNews)
+        .filter(
+            TickerNews.ticker_id == ticker_obj.id,
+            TickerNews.snapshot_date == trade_day,
+        )
+        .order_by(TickerNews.published_at.desc())
+        .limit(3)
+        .all()
+    )
+
+    news_items = [
+        TradeMarketSnapshotNewsItem(
+            title=row.title,
+            summary=row.summary or "",
+            source=row.source or "",
+            url=row.url or "",
+            publishedAt=row.published_at.isoformat() if row.published_at else None,
+        )
+        for row in rows
+    ]
+
+    return TradeMarketSnapshotQualResponse(
+        type="qual",
+        snapshotDate=str(trade_day),
+        news=news_items,
+    )
 
 
 # service 함수들
@@ -266,4 +340,22 @@ def get_trade_snapshot_quant(db: Session, user_id: int, trade_id: int, rng: Quan
     # 생성
     resp = build_quant_snapshot_for_trade(db, trade, rng)
     _save_snapshot(db, trade_id, "quant", rng, resp.model_dump())
+    return resp
+
+
+def get_trade_snapshot_qual(db: Session, user_id: int, trade_id: int) -> TradeMarketSnapshotQualResponse:
+    trade = (
+        db.query(Trade)
+        .filter(Trade.id == trade_id, Trade.user_id == user_id)
+        .first()
+    )
+    if not trade:
+        raise HTTPException(status_code=404, detail="trade not found")
+
+    cached = _get_cached_snapshot(db, trade_id, "qual", None)
+    if cached:
+        return TradeMarketSnapshotQualResponse.model_validate(cached.data)
+
+    resp = build_qual_snapshot_for_trade(db, trade)
+    _save_snapshot(db, trade_id, "qual", None, resp.model_dump())
     return resp
