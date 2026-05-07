@@ -13,10 +13,12 @@ class ActionPlan(Base):
 
     buy_title = Column(String(200), nullable=False)
     buy_summary = Column(String, nullable=False)
+    buy_rule = Column(String, nullable=False)
     buy_referenced_trade_ids = Column(JSON, nullable=False)
 
     sell_title = Column(String(200), nullable=False)
     sell_summary = Column(String, nullable=False)
+    sell_rule = Column(String, nullable=False)
     sell_referenced_trade_ids = Column(JSON, nullable=False)
 
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)

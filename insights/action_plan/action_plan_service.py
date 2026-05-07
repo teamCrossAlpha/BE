@@ -1,155 +1,200 @@
 from sqlalchemy.orm import Session
 from openai import OpenAI
 import json
-
 from common.config import settings
-
 from trades.trades_entity import Trade
 from insights.action_plan.action_plan_entity import ActionPlan
 from insights.action_plan.action_plan_repository import (
     get_latest_action_plan,
-    create_action_plan
+    create_action_plan,
 )
 
 client = OpenAI(api_key=settings.openai_api_key)
 
+# =========================
+# 데이터 부족 플레이스홀더
+# =========================
+INSUFFICIENT_PLAN = {
+    "title": "데이터 부족",
+    "summary": "액션 플랜을 생성하려면 같은 유형의 거래가 최소 2건 이상 필요합니다. 거래를 더 기록해 주세요.",
+    "rule": None,
+    "referenced_trade_ids": [],
+}
 
+# =========================
+# SYSTEM PROMPT
+# =========================
 SYSTEM_PROMPT = """
-당신은 CrossAlpha의 트레이딩 코치입니다.
+당신은 CrossAlpha의 AI 트레이딩 코치입니다.
+사용자의 최근 매매일지와 실제 손익 결과를 함께 분석하여
+매수·매도 행동 패턴을 각각 진단하고, 다음 거래에 바로 적용할 수 있는 실질적인 액션 플랜을 제공합니다.
 
-사용자의 최근 매매일지 10건을 분석하여 
-행동 패턴을 우선순위 기반으로 분석하고
-실질적인 액션 플랜을 제공합니다.
-
----
-
-## 핵심 분석 전략
-
-반드시 아래 순서대로 판단하세요:
-
-### 1️. 부정 패턴 존재 여부 판단
-
-다음 중 하나라도 해당하면 "부정 패턴 존재"로 판단:
-- 반복된 위험 행동 (2회 이상)
-- 손실로 이어진 패턴
-- 감정 기반 매매 (FOMO, 공포매도 등)
-- 확신도와 결과의 불일치
-
-⚠️ 중요:
-- 최근 3건 내에서 발생한 부정 패턴은 
-  단 1~2회라도 강한 신호로 간주하세요
-
-👉 이 경우:
-→ 부정 패턴을 최우선으로 분석하세요
-→ 긍정 행동은 보조로 간단히 언급
+CrossAlpha의 핵심 철학:
+- 투자 결정을 대신 내리지 않습니다
+- "이렇게 해라"가 아니라 "당신의 데이터에서 이런 패턴이 보인다"는 방식으로 전달합니다
+- 모든 주장은 반드시 수치로 뒷받침되어야 합니다
 
 ---
 
-### 2️. 부정 패턴이 뚜렷하지 않은 경우
+## STEP 1. 분석 전 필수 규칙 (모든 판단의 전제)
 
-👉 이 경우:
-→ 긍정 행동을 중심으로 분석하세요
-→ 잘한 전략을 강조하고 유지하도록 피드백하세요
+### 최소 근거 기준
+- 반드시 2건 이상의 거래를 근거로 사용하세요
+- 단 1건만 존재하는 패턴은 "패턴"으로 판단하지 마세요
+- 매수 액션 플랜은 type이 "buy"인 거래만, 매도 액션 플랜은 type이 "sell"인 거래만 분석합니다
 
----
+### 수치화 의무 규칙 (매우 중요)
+모든 주장에는 반드시 구체적인 수치가 포함되어야 합니다:
+- ❌ "FOMO 매수 패턴이 반복되고 있습니다"
+- ✅ "FOMO 매수 4건 중 4건 손실, 평균 손실률 -9.2%"
+- ❌ "확신도가 높을 때 수익이 좋습니다"
+- ✅ "확신도 70 이상 거래 3건의 평균 수익률 +6.1%, 확신도 50 미만 3건은 평균 -4.3%"
+pnl_rate가 null인 거래(OPEN 포지션)는 수익률 계산에서 제외하고, 제외 사실을 명시하세요
 
-## 3. 공통 분석 규칙
+### 시간 가중치 규칙
+| 구간 | 가중치 | 적용 기준 |
+|------|--------|---------|
+| 최근 1~3번째 거래 | 최우선 | 반복 여부와 관계없이 강한 신호로 간주 |
+| 최근 4~6번째 거래 | 중요 | 흐름 파악의 기준 |
+| 7~10번째 거래 | 보조 참고 | 장기 패턴 확인용 |
 
-- 반드시 최소 2개 이상의 거래를 근거로 사용하세요
-- 하나의 거래만 보고 판단하지 마세요
-- 거래 흐름 전체를 고려하세요
-
----
-
-### 3-1. 시간 가중치 규칙 (매우 중요)
-
-- 최근 거래일수록 더 높은 중요도로 판단하세요
-- 특히 최근 3건의 거래는 전체 판단에 가장 큰 영향을 줍니다
-- 오래된 거래보다 최근 거래에서 반복되는 패턴을 우선적으로 해석하세요
-
-👉 우선순위 기준:
-1. 최근 3건에서 반복되는 패턴 → 최우선
-2. 최근 5건에서 나타나는 흐름 → 중요
-3. 전체 10건에서의 장기 패턴 → 보조 참고
-
-- 과거에 존재했던 패턴이라도 최근에 개선되었다면 "개선된 행동"으로 평가하세요
-- 반대로 과거에는 없던 문제라도 최근에 발생했다면 "새로운 위험 패턴"으로 판단하세요
+- 과거에 있던 문제가 최근 3건에서 사라졌다면 → "개선된 행동"으로 평가
+- 과거에 없던 문제가 최근 3건에서 처음 나타났다면 → "새로운 위험 신호"로 판단
 
 ---
 
-## 제목 생성 규칙 
+## STEP 2. 핵심 패턴 판단 (매수/매도 각각 독립적으로 수행)
 
-제목은 반드시:
+### 판단 A: 부정 패턴 존재 여부
 
-- "행동 패턴 + 평가 + 개선 방향" 구조
-- 구체적인 행동 포함 (FOMO, 물타기, 공포매도 등)
-- 피드백 포함 ("주의하세요", "개선하세요", "유지하세요", "명확히 하세요")
+다음 중 하나라도 해당하면 "부정 패턴 존재"로 판단합니다:
+- 같은 유형의 위험 행동이 2회 이상 반복됨
+- 손실(pnl_rate < 0)로 이어진 행동 패턴이 반복됨
+- 감정 기반 매매 (FOMO, 공포매도, 자책성 매도 등)
+- 확신도(conviction)가 높은데 일관되게 손실 / 확신도가 낮은데 일관되게 거래 반복
+
+⚠️ 최근 3건 내 발생한 부정 패턴은 1~2회라도 강한 신호입니다
+
+**부정 패턴이 있는 경우 → 판단 B로 이동**
+**부정 패턴이 없는 경우 → 판단 C로 이동**
+
+### 판단 B: 부정 패턴 중심 분석
+
+- 가장 위험한 패턴을 최우선으로 분석합니다
+- 여러 부정 패턴이 있다면 최근성과 반복 횟수로 우선순위를 정합니다
+- 패턴이 발생하는 조건(트리거)을 구체적으로 파악하세요
+  예: "급등 후 3일 이내 진입", "직전 거래가 손실일 때", "어닝 발표 당일"
+- 긍정 행동이 있다면 summary 마지막 문장에 한 줄로만 언급합니다
+
+### 판단 C: 긍정 패턴 중심 분석
+
+- 잘 작동하고 있는 행동 패턴을 중심으로 분석합니다
+- 왜 이 패턴이 좋은지 수익률·확신도 데이터로 수치화하여 근거를 제시합니다
+- "이 전략을 유지하세요"라는 방향으로 피드백합니다
+
+---
+
+## STEP 3. 제목 작성 규칙
+
+형식: **[구체적 행동 패턴] + [수치 포함 평가] + [방향 제언]**
+
+✅ 좋은 예시:
+- "FOMO 매수 4건 전부 손실 (-9.2% 평균) — 진입 전 24시간 대기 규칙을 만들어보세요"
+- "확신도 70+ 거래에서 일관된 수익 (+6.1%) — 이 기준을 유지하세요"
+- "어닝 당일 2회 연속 손절 — 이벤트 전 신규 진입 기준을 정해두세요"
+- "물타기 3회, 평균 추가 손실 -4.7% — 추가 매수 조건을 사전에 정의하세요"
 
 ❌ 금지:
-- "매수 전략 개선"
-- "매도 전략 강화"
-- 단순 요약형 제목
+- "매수 전략 개선" (수치 없음, 구체적 행동 없음)
+- "매도 타이밍 재검토" (평가와 방향 없음)
+- "최근 거래 패턴 분석" (단순 요약)
+- "지금 당장 손절하세요" (매매 지시)
 
 ---
 
-## summary 작성 규칙
+## STEP 4. Summary 작성 규칙
 
-### 부정 패턴이 있는 경우
-- 2~3문장
-- 반드시 포함:
-  1. 반복 문제 패턴
-  2. 왜 위험한지
-  3. 개선 방향
+분량: 3~4문장 (수치 중심, 밀도 있게)
 
-- 추가:
-  - 긍정 행동이 있다면 마지막 문장에 짧게 언급
+**부정 패턴이 있는 경우:**
+1. 어떤 패턴이 몇 건에서 반복되었는지 + 평균 손익률
+2. 이 패턴이 주로 어떤 조건(트리거)에서 발생하는지
+3. 확신도와 결과의 관계 (데이터가 있는 경우)
+4. 구체적인 개선 방향 — 투자 결정은 유저에게, 사전 기준 설정만 제안
+
+**부정 패턴이 없는 경우:**
+1. 어떤 패턴이 잘 작동하고 있는지 + 수익률 수치
+2. 왜 좋은지 — 확신도-결과 상관관계나 행동 태그별 성과로 근거 제시
+3. 이 전략을 유지하도록 권장
+
+⚠️ 금지:
+- "매수하세요", "매도하세요", "손절하세요" 등 직접적 매매 지시
+- 수치 없는 주관적 평가 ("좋은 편입니다", "위험해 보입니다")
+- 거래 데이터에 없는 내용 추론
 
 ---
 
-### 부정 패턴이 없는 경우
-- 2~3문장
-- 반드시 포함:
-  1. 잘한 행동 패턴
-  2. 왜 좋은지 (근거)
-  3. 유지 권장 ("이 전략은 유지하세요")
+## STEP 5. Rule 작성 규칙
+
+유저가 다음 거래 전에 스스로 점검할 수 있는 구체적인 행동 기준 1개를 작성합니다.
+이 필드가 액션 플랜의 핵심입니다.
+
+형식: "~할 때는 ~를 확인한다 / ~하지 않는다 / ~를 먼저 한다"
+
+✅ 좋은 예시:
+- "확신도가 60 미만이면 포지션 크기를 절반으로 줄인다"
+- "직전 거래가 손실로 끝난 날에는 당일 신규 매수를 하지 않는다"
+- "어닝 발표 3일 전~당일에는 해당 종목 신규 진입을 하지 않는다"
+- "매수 전 '지금 사지 않으면 영원히 못 산다고 느끼는가?'를 자문하고, YES이면 24시간 기다린다"
+
+❌ 금지:
+- "FOMO 매수를 줄인다" (측정 불가, 모호함)
+- "신중하게 매매한다" (행동으로 이어지지 않는 다짐)
+- "손절을 잘 한다" (기준 없는 선언)
+
+부정 패턴이 없는 경우에는 잘 작동하는 행동을 지속하기 위한 기준을 작성합니다.
 
 ---
 
 ## 출력 형식
 
+반드시 아래 JSON만 출력하세요. 다른 텍스트는 포함하지 마세요.
+referenced_trade_ids는 분석 근거로 사용한 실제 거래의 id만 기입하세요 (2~5개).
+
 {
   "buy_action_plan": {
     "title": "",
     "summary": "",
+    "rule": "",
     "referenced_trade_ids": []
   },
-  "sell_action_plan": {:wq
-  
+  "sell_action_plan": {
     "title": "",
     "summary": "",
+    "rule": "",
     "referenced_trade_ids": []
   }
 }
 """
 
+
 # =========================
 # USER PROMPT
 # =========================
-def _build_user_prompt(trades_json):
+def _build_user_prompt(trades_json: dict) -> str:
     return f"""
 아래는 사용자의 최근 매매일지 10건입니다.
-
-반드시 거래 흐름 전체를 보고
-반복 패턴 + 위험 행동 + 확신도 불일치를 중심으로 분석하세요.
+pnl_rate와 pnl_status가 포함되어 있습니다. OPEN 상태 거래는 수익률 계산에서 제외하세요.
+반드시 모든 주장을 수치로 뒷받침하고, 반복 패턴의 트리거 조건까지 파악하세요.
 
 {json.dumps(trades_json, ensure_ascii=False)}
 """
 
 
 # =========================
-# 변환
+# 변환 (pnl 데이터 포함)
 # =========================
-def _convert_to_gpt_format(trades):
+def _convert_to_gpt_format(trades: list) -> dict:
     return {
         "trades": [
             {
@@ -161,7 +206,9 @@ def _convert_to_gpt_format(trades):
                 "quantity": t.quantity,
                 "reason": t.memo or "",
                 "conviction": t.confidence or 0,
-                "behavior_tag": t.behavior_type
+                "behavior_tag": t.behavior_type,
+                "pnl_rate": float(t.result.pnl_rate) if t.result and t.result.pnl_rate is not None else None,
+                "pnl_status": t.result.pnl_status if t.result else "OPEN",
             }
             for t in trades
         ]
@@ -169,26 +216,34 @@ def _convert_to_gpt_format(trades):
 
 
 # =========================
+# 매수/매도 건수 확인
+# =========================
+def _count_trade_types(trades: list) -> tuple[int, int]:
+    buy_count = sum(1 for t in trades if t.trade_type == "BUY")
+    sell_count = sum(1 for t in trades if t.trade_type == "SELL")
+    return buy_count, sell_count
+
+
+# =========================
 # GPT 호출
 # =========================
-def _call_gpt(trades_json):
+def _call_gpt(trades_json: dict) -> dict:
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         temperature=0.2,
+        response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": _build_user_prompt(trades_json)}
+            {"role": "user", "content": _build_user_prompt(trades_json)},
         ],
     )
-
-    content = response.choices[0].message.content.strip()
-    return json.loads(content)
+    return json.loads(response.choices[0].message.content.strip())
 
 
 # =========================
-# 최근 거래
+# 최근 거래 조회
 # =========================
-def _get_recent_trades(db: Session, user_id: int):
+def _get_recent_trades(db: Session, user_id: int) -> list:
     return (
         db.query(Trade)
         .filter(Trade.user_id == user_id)
@@ -201,10 +256,16 @@ def _get_recent_trades(db: Session, user_id: int):
 # =========================
 # 생성
 # =========================
-def _generate_and_save(db: Session, user_id: int):
+def _generate_and_save(db: Session, user_id: int) -> ActionPlan | None:
     trades = _get_recent_trades(db, user_id)
 
     if len(trades) < 10:
+        return None
+
+    buy_count, sell_count = _count_trade_types(trades)
+
+    # 매수·매도 모두 2건 미만이면 생성 불가
+    if buy_count < 2 and sell_count < 2:
         return None
 
     latest_trade = trades[0]
@@ -215,27 +276,31 @@ def _generate_and_save(db: Session, user_id: int):
 
     gpt_result = _call_gpt(_convert_to_gpt_format(trades))
 
+    # 한쪽 타입이 부족하면 플레이스홀더로 대체
+    if buy_count < 2:
+        gpt_result["buy_action_plan"] = INSUFFICIENT_PLAN
+    if sell_count < 2:
+        gpt_result["sell_action_plan"] = INSUFFICIENT_PLAN
+
     action_plan = ActionPlan(
         user_id=user_id,
         last_trade_id=latest_trade.id,
-
         buy_title=gpt_result["buy_action_plan"]["title"],
         buy_summary=gpt_result["buy_action_plan"]["summary"],
+        buy_rule=gpt_result["buy_action_plan"]["rule"],
         buy_referenced_trade_ids=gpt_result["buy_action_plan"]["referenced_trade_ids"],
-
         sell_title=gpt_result["sell_action_plan"]["title"],
         sell_summary=gpt_result["sell_action_plan"]["summary"],
+        sell_rule=gpt_result["sell_action_plan"]["rule"],
         sell_referenced_trade_ids=gpt_result["sell_action_plan"]["referenced_trade_ids"],
     )
-
     return create_action_plan(db, action_plan)
 
 
 # =========================
 # GET (자동 생성 포함)
 # =========================
-def get_latest_action_plan_service(db: Session, user_id: int):
-
+def get_latest_action_plan_service(db: Session, user_id: int) -> dict:
     plan = _generate_and_save(db, user_id)
 
     if not plan:
@@ -245,12 +310,14 @@ def get_latest_action_plan_service(db: Session, user_id: int):
         "buy_action_plan": {
             "title": plan.buy_title,
             "summary": plan.buy_summary,
-            "referenced_trade_ids": plan.buy_referenced_trade_ids
+            "rule": plan.buy_rule,
+            "referenced_trade_ids": plan.buy_referenced_trade_ids,
         },
         "sell_action_plan": {
             "title": plan.sell_title,
             "summary": plan.sell_summary,
-            "referenced_trade_ids": plan.sell_referenced_trade_ids
+            "rule": plan.sell_rule,
+            "referenced_trade_ids": plan.sell_referenced_trade_ids,
         },
-        "created_at": plan.created_at.isoformat()
+        "created_at": plan.created_at.isoformat(),
     }
