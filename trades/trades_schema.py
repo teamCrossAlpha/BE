@@ -69,3 +69,8 @@ class TradeSummaryPayload(BaseModel):
 
 class TradeSummaryResponse(BaseModel):
     summary: TradeSummaryPayload
+
+
+class TradeDeleteResponse(BaseModel):
+    status: str
+    tradeId: int
