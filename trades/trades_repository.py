@@ -4,7 +4,7 @@ from typing import List, Tuple, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func, asc
 
-from trades.trades_entity import Asset, Holding, Trade, TradeResult, TradePosition
+from trades.trades_entity import Asset, Holding, Trade, TradeResult, TradePosition, TradeMarketSnapshot
 
 
 def get_or_create_asset(db: Session, ticker: str) -> Asset:
@@ -196,3 +196,41 @@ def get_position_state(db: Session, user_id: int, position_id: int) -> Tuple[int
         avg_price = buy_cost / Decimal(buy_qty)
 
     return remaining_qty, avg_price # remaining_qty: 현재 남은 수량, avg_price: BUY 기준 가중평균 매입단가
+
+
+def get_trade_for_delete(db: Session, user_id: int, trade_id: int) -> Trade | None:
+    return (
+        db.query(Trade)
+        .filter(
+            Trade.id == trade_id,
+            Trade.user_id == user_id,
+        )
+        .first()
+    )
+
+
+def delete_trade_snapshots(db: Session, trade_id: int) -> None:
+    db.query(TradeMarketSnapshot).filter(
+        TradeMarketSnapshot.trade_id == trade_id
+    ).delete(synchronize_session=False)
+
+
+def delete_trade_result(db: Session, trade_id: int) -> None:
+    db.query(TradeResult).filter(
+        TradeResult.trade_id == trade_id
+    ).delete(synchronize_session=False)
+
+
+def get_position_with_trades(db: Session, user_id: int, position_id: int) -> TradePosition | None:
+    return (
+        db.query(TradePosition)
+        .filter(
+            TradePosition.id == position_id,
+            TradePosition.user_id == user_id,
+        )
+        .first()
+    )
+
+
+def delete_position(db: Session, position: TradePosition) -> None:
+    db.delete(position)

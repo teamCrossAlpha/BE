@@ -15,13 +15,13 @@ from trades.trades_schema import (
     TradeCreateResponse,
     TradeListResponse,
     TradeDetailResponse,
-    TradeSummaryResponse,
+    TradeSummaryResponse, TradeDeleteResponse,
 )
 from trades.trades_service import (
     create_trade_and_update_position,
     get_trade_list,
     get_trade_detail,
-    get_trade_summary,
+    get_trade_summary, delete_trade,
 )
 
 from trades.trade_positions_schema import TradePositionsResponse
@@ -88,3 +88,11 @@ def get_trade_market_snapshot_quant(
 ):
     return get_trade_snapshot_quant(db, user_id=user_id, trade_id=tradeId, rng=range)
 
+
+@router.delete("/{tradeId}", response_model=TradeDeleteResponse)
+def remove_trade(
+    tradeId: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    return delete_trade(db, user_id, tradeId)

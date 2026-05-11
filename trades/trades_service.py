@@ -21,6 +21,7 @@ from trades.trades_schema import (
     PnlPayload,
     TradeSummaryResponse,
     TradeSummaryPayload,
+    TradeDeleteResponse,
 )
 from trades.trades_repository import (
     get_or_create_asset,
@@ -29,6 +30,7 @@ from trades.trades_repository import (
     list_trades_with_results,
     get_trade_with_result,
     get_summary, close_position, get_open_position, create_position, list_position_buy_trades, get_position_state,
+    delete_trade_snapshots, get_trade_for_delete, delete_trade_result, get_position_with_trades, delete_position,
 )
 
 
@@ -232,3 +234,62 @@ def get_trade_summary(db: Session, user_id: int) -> TradeSummaryResponse:
             bestTradeReturn=float(best_return),
         )
     )
+
+
+def delete_trade(db: Session, user_id: int, tradeId: int) -> TradeDeleteResponse:
+    trade = get_trade_for_delete(db, user_id, tradeId)
+
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+
+    position_id = trade.position_id
+
+    try:
+        # 1. 거래 상세 스냅샷 삭제
+        delete_trade_snapshots(db, tradeId)
+
+        # 2. 거래 결과 삭제
+        delete_trade_result(db, tradeId)
+
+        # 3. 매매일지 삭제
+        db.delete(trade)
+        db.flush()
+
+        # 4. 연결된 position 상태 정리
+        position = get_position_with_trades(db, user_id, int(position_id))
+
+        if position:
+            remaining_trades = position.trades
+
+            if len(remaining_trades) == 0:
+                delete_position(db, position)
+            else:
+                buy_qty = 0
+                sell_qty = 0
+                last_exit_trade = None
+
+                for t in remaining_trades:
+                    if t.trade_type == "BUY":
+                        buy_qty += int(t.quantity)
+                    elif t.trade_type == "SELL":
+                        sell_qty += int(t.quantity)
+                        if last_exit_trade is None or t.trade_date > last_exit_trade.trade_date:
+                            last_exit_trade = t
+
+                if buy_qty > 0 and sell_qty >= buy_qty:
+                    position.status = "CLOSED"
+                    position.closed_at = datetime.utcnow()
+                else:
+                    position.status = "OPEN"
+                    position.closed_at = None
+
+        db.commit()
+
+        return TradeDeleteResponse(
+            status="DELETED",
+            tradeId=tradeId,
+        )
+
+    except Exception:
+        db.rollback()
+        raise
