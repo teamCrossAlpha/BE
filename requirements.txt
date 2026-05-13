@@ -12,3 +12,8 @@ APScheduler
 pandas
 numpy
 yfinance
+langchain
+langchain-openai
+langchain-community
+faiss-cpu
+tiktoken
