@@ -21,6 +21,7 @@ from portfolio.portfolio_router import router as portfolio_router
 from watchlist.watchlist_router import router as watchlist_router
 from tickers.news_scheduler import run_daily_at_9
 from analysis.analysis_router import router as analysis_router
+from rag.rag_router import router as rag_router
 
 import threading
 
@@ -59,5 +60,6 @@ app.include_router(watchlist_router)
 app.include_router(user_router)
 app.include_router(analysis_router)
 app.include_router(action_plan_router)
+app.include_router(rag_router)
 
 #threading.Thread(target=run_daily_at_9, daemon=True).start()
