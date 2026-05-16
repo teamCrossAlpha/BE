@@ -33,6 +33,8 @@ from trades.trades_repository import (
     delete_trade_snapshots, get_trade_for_delete, delete_trade_result, get_position_with_trades, delete_position,
 )
 
+from insights.action_plan.action_plan_entity import ActionPlan
+
 
 def _validate_behavior(trade_type: str, behavior_type: str):
     if trade_type == "BUY":
@@ -245,17 +247,22 @@ def delete_trade(db: Session, user_id: int, tradeId: int) -> TradeDeleteResponse
     position_id = trade.position_id
 
     try:
-        # 1. 거래 상세 스냅샷 삭제
+        # 연결된 액션 플랜 삭제
+        db.query(ActionPlan).filter(
+            ActionPlan.last_trade_id == tradeId
+        ).delete(synchronize_session=False)
+
+        # 거래 상세 스냅샷 삭제
         delete_trade_snapshots(db, tradeId)
 
-        # 2. 거래 결과 삭제
+        # 거래 결과 삭제
         delete_trade_result(db, tradeId)
 
-        # 3. 매매일지 삭제
+        # 매매일지 삭제
         db.delete(trade)
         db.flush()
 
-        # 4. 연결된 position 상태 정리
+        # 연결된 position 상태 정리
         position = get_position_with_trades(db, user_id, int(position_id))
 
         if position:
