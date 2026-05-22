@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     jwt_secret: str
     database_url: str
+    redis_url: str
 
     debug: bool = True
 

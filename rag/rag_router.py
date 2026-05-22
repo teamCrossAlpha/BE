@@ -26,4 +26,5 @@ def ask_chart_assistant_route(
         ticker=ticker,
         question=req.question,
         range_=req.range,
+        session_id=req.session_id,
     )
